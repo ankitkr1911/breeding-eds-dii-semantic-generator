@@ -1,102 +1,215 @@
-# Excel to YAML (Semantic) Utility
+# BigQuery → Semantic CSV/YAML Utility
 
-## Overview
-
-The Excel to YAML (Semantic) Utility is a powerful tool designed to convert Excel templates into structured YAML files. This utility is particularly useful for data modeling and semantic design, allowing users to define cubes, joins, dimensions, and measures in an Excel format and seamlessly translate that into a YAML configuration.
+A Python CLI to generate and maintain semantic modeling artifacts from Google BigQuery tables:
+- Auto-build a CSV skeleton with dimensions and a default measure.
+- Render YAML files (one per table/cube) in a consistent format.
+- Support multiple tables per run, idempotent upsert into a single CSV.
+- Append a run log and capture errors separately for traceability.
 
 ## Features
 
-This utility reads an Excel template containing the following sheets:
+- Automatic CSV generation for one or more BigQuery tables:
+  - One row per column as a dimension.
+  - Auto-derived dimension_title from column name (e.g., capacity_request_id → “Capacity Request ID”).
+  - Auto-derived cube_title from cube name (e.g., capacity_request → “Capacity Request”).
+  - cube_data_source set to the second dash-separated part of the project ID (e.g., bcs-breeding-datasets → “breeding”).
+- Default measure (if PK detected):
+  - name: count_distinct_<pk>
+  - title: “Distinct count of <PK Title>”
+  - description: “This is to get Distinct count of <PK Title> recorded in the <dataset> application”
+  - sql: '{<pk>}'
+  - type: count_distinct
+- YAML generation per cube, in parallel:
+  - Output files named <cube>.yml (e.g., capacity_request.yml).
+- CSV edit-and-rebuild mode:
+  - Edit the generated CSV; rebuild YAMLs from it.
+- Logging and error handling:
+  - Markdown run log embedding all YAMLs for the run.
+  - Separate error log with stack traces.
 
-### 1. Cubes
-- **table**: The name of the underlying table.
-- **sql_table**: The SQL representation of the table.
-- **name**: The name of the cube.
-- **description**: A detailed description of the cube's purpose and functionality.
-- **title**: The title for display purposes.
+## Project Structure
 
-### 2. Joins
-- **Primary Table**: The main table involved in the join.
-- **Secondary Table**: The table that is being joined to the primary table.
-- **relationship**: The nature of the relationship (e.g., one-to-many).
-- **Primary Table Key Column**: The key column in the primary table.
-- **Secondary Table Key Column**: The key column in the secondary table.
+```
+.
+├─ input/
+│  └─ semantic_all.csv          # Combined CSV; upserted per run
+├─ output/
+│  ├─ capacity_request.yml      # YAML per cube (table)
+│  ├─ <other_cube>.yml
+│  └─ logs/
+│     ├─ log_YYYYMMDD_HHMMSS.md
+│     └─ errors/
+│        └─ errors_YYYYMMDD_HHMMSS.log
+└─ utility.py                    # CLI entry point
+```
 
-### 3. Dimensions
-- **name**: The name of the dimension.
-- **title**: A title for the dimension.
-- **description**: A description detailing the dimension's role.
-- **sql**: The SQL representation of the dimension.
-- **primaryKey**: Indicates if the dimension is a primary key.
-- **type**: The data type of the dimension.
+## Prerequisites
 
-### 4. Measures
-- **name**: The name of the measure.
-- **title**: A title for the measure.
-- **description**: A description of the measure's purpose.
-- **sql**: The SQL representation of the measure.
-- **type**: The aggregation type (e.g., sum, average).
+- Python 3.9+ (tested on Python 3.10)
+- Packages:
+  - pandas
+  - google-cloud-bigquery
+  - google-cloud-datacatalog (optional; used for PK detection via tags)
+
+Install packages:
+```bash
+pip install pandas google-cloud-bigquery google-cloud-datacatalog
+```
+
+### Authenticate to Google Cloud
+
+BigQuery client needs credentials (ADC).
+
+Option A: Cloud SDK (user credentials)
+- Install SDK (Windows):
+  - via winget: winget install -e --id Google.CloudSDK
+  - or via installer: https://cloud.google.com/sdk/docs/install
+- Then:
+```bash
+gcloud auth application-default login
+gcloud config set project <project-id>
+```
+
+Option B: Service Account key (no SDK needed)
+- Create a service account with roles:
+  - BigQuery Data Viewer (required)
+  - Data Catalog Viewer (optional; for PK detection via tags)
+- Download JSON key and set env var:
+  - CMD (current session): set GOOGLE_APPLICATION_CREDENTIALS=C:\path\to\key.json
+  - PowerShell: $env:GOOGLE_APPLICATION_CREDENTIALS="C:\path\to\key.json"
 
 ## Usage
 
-### 1. Excel -> YAML
-To convert an Excel template to a YAML file, use the command line interface:
+### Generate from a single BigQuery table
+
+- Appends/updates input/semantic_all.csv
+- Writes YAML to output/<cube>.yml
+- Creates run log and error log (if any)
 
 ```bash
-python utility.py -i "input/Semantic_design_template.xlsx" -o "output/semantic_output.yml"
+python utility.py --bq-table bcs-breeding-datasets.velocity.capacity_request -i ./input --output-dir ./output --verbose
 ```
 
-### 2. BigQuery Table -> CSV + YAML
-You can also generate a semantic design directly from a BigQuery table (schema introspection). This will:
-- Infer a cube whose name is the table name (last segment).
-- Create a CSV scaffold in `input/semantic_<table_name>1.csv` listing all columns as dimensions.
-- Infer a primary key using heuristic order: `<table>_id`, `id`, first column ending `_id`, else first required column.
-- Add a default measure `distinct_<pk>_count` with `type=countDistinct` (if a PK was inferred).
-- Generate the YAML in the specified `-o` path (e.g. `output/semantic_output.yml`).
-- Create a new timestamped log file in `logs/`.
+### Generate from multiple tables
 
-Example:
+Pass multiple flags:
 ```bash
-python utility.py --bq-table bcs-breeding-datasets.velocity.capacity_request -o output/semantic_output.yml
+python utility.py --bq-table proj.ds.table1 --bq-table proj.ds.table2 -i ./input --output-dir ./output --verbose
 ```
 
-Resulting CSV pattern (example `capacity_request`):
-```
-input/semantic_capacity_request1.csv
-```
-
-### Command-Line Options
-Mutually exclusive input modes:
-- `-i`, `--input`: Path to the input Excel file (.xlsx).
-- `--bq-table`: Fully qualified BigQuery table (`project.dataset.table` or `dataset.table` if default project configured).
-
-Common:
-- `-o`, `--output`: Path to the output YAML file (.yml).
-- `--only-cube`: (Excel mode) Filter to a single cube name.
-- `--no-include-unknown`: (Excel mode) Exclude extra/unrecognized columns from YAML.
-- `--verbose`: (Excel mode) Print sheet detection diagnostics.
-
-### BigQuery Notes
-Authentication relies on your local gcloud / ADC configuration (e.g. `gcloud auth application-default login` or `GOOGLE_APPLICATION_CREDENTIALS`).
-If a table has no obvious primary key, the first required column is used; adjust manually afterward in the generated CSV/YAML. Joins are intentionally omitted for manual editing later.
-
-## Requirements
-
-Python 3.9+ and these packages:
-- `pandas` – data manipulation
-- `openpyxl` – Excel reading
-- `PyYAML` – YAML (currently manual rendering used, but retained)
-- `google-cloud-bigquery` – BigQuery metadata access (only needed for `--bq-table` mode)
-
-Install:
+Or comma-separated:
 ```bash
-pip install pandas openpyxl PyYAML google-cloud-bigquery
+python utility.py --bq-tables proj.ds.table1,proj.ds.table2 -i ./input --output-dir ./output --verbose
 ```
 
-## Conclusion
+### Rebuild YAMLs from edited CSV
 
-The Excel to YAML (Semantic) Utility is an essential tool for anyone looking to streamline their data modeling process. By converting Excel templates into structured YAML files, this utility facilitates easier integration into data processing pipelines and enhances overall productivity.
+After editing input/semantic_all.csv (e.g., adding descriptions, joins):
+```bash
+python utility.py --from-csv ./input/semantic_all.csv --output-dir ./output --verbose
+```
 
-For any issues or suggestions, please feel free to open an issue in the repository.
+## CSV Schema (columns)
 
----
+- dimension_name
+- dimension_measure_flag (“dimension” | “measure”)
+- dimension_title
+- dimension_description
+- dimension_sql
+- primary_key (“TRUE” for PK dimension)
+- dimension_type (e.g., string, number, time; for measure: count_distinct)
+- cube_name
+- cube_sql_table (project.dataset.table)
+- cube_description
+- cube_title
+- cube_data_source
+- view_name, view_title, view_description, visible_in_view, view_folder_name
+- join_primary_table, join_secondary_table, join_sql, join_relationship
+
+Notes:
+- dimension_title is auto derived from dimension_name.
+- cube_title is auto derived from cube_name.
+- cube_data_source is derived from the project ID (second dash-separated token).
+
+## YAML Structure
+
+Each cube renders as:
+```yaml
+cubes:
+- description: "..."
+  name: capacity_request
+  sql_table: 'bcs-breeding-datasets.velocity.capacity_request'
+  title: "Capacity Request"
+
+  joins:
+  # Optional; only if present in CSV (manually added)
+  - name: experiment_sets_entries
+    relationship: one_to_many
+    sql: '{CUBE.capacity_request_id} = {experiment_sets_entries.capacity_request_id}'
+
+  dimensions:
+  #----------joining keys--------------
+  - name: capacity_request_id
+    title: "Capacity Request ID"
+    description: "..."
+    sql: '{CUBE}.capacity_request_id'
+    primaryKey: true
+    type: number
+
+  measures:
+  - name: count_distinct_capacity_request_id
+    title: "Distinct count of Capacity Request ID"
+    description: "This is to get Distinct count of Capacity Request ID recorded in the velocity application"
+    sql: '{capacity_request_id}'
+    type: count_distinct
+```
+
+Filenames:
+- output/<cube>.yml (e.g., output/capacity_request.yml)
+
+## Primary Key Detection
+
+BigQuery does not enforce PKs. The utility infers PK using:
+1. Data Catalog tags (if available):
+   - Tag fields named primary_key, is_pk, or pk with true-ish values, attached to columns.
+2. BigQuery column descriptions:
+   - Contains “primary key” or “pk”.
+3. Naming heuristics:
+   - <table>_id → any column ending with _id → id.
+
+If a PK is detected, the default measure is added. If not, no default measure is created; you can set the primary_key flag in CSV manually and rebuild YAML.
+
+## Logging
+
+- Run log (Markdown) embedding YAML outputs:
+  - output/logs/log_YYYYMMDD_HHMMSS.md
+- Error log:
+  - output/logs/errors/errors_YYYYMMDD_HHMMSS.log
+
+## Troubleshooting
+
+- SyntaxError at line 1:
+  - Cause: Code fences (```python) pasted into utility.py.
+  - Fix: Remove backticks; utility.py must be pure Python.
+
+- Default credentials not found:
+  - Cause: ADC not set.
+  - Fix: Use Cloud SDK (gcloud auth application-default login) or set GOOGLE_APPLICATION_CREDENTIALS to a service account JSON key.
+
+- “unrecognized arguments: -o …”:
+  - Cause: Updated CLI uses --output-dir, not -o.
+  - Fix: Use --output-dir ./output.
+
+- Duplicate rows in CSV:
+  - Handled by upsert: the utility removes existing rows for a cube and writes fresh ones.
+
+## Development Notes
+
+- Rendering is manual to match the existing YAML style and quoting:
+  - Double quotes for display strings; single quotes for SQL-like fragments.
+- Data Catalog dependency is optional and handled gracefully; if unavailable, the utility falls back to descriptions and heuristics.
+- The utility supports both generation from BigQuery and rebuild from CSV to accommodate manual edits.
+
+## License
+
+Internal utility for semantic modeling. Adjust, extend, or integrate as needed within your environment.
