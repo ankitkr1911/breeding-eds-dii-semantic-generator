@@ -39,27 +39,58 @@ This utility reads an Excel template containing the following sheets:
 
 ## Usage
 
-To convert an Excel template to a YAML file, use the command line interface. Below is an example command to convert and filter to a specific cube:
+### 1. Excel -> YAML
+To convert an Excel template to a YAML file, use the command line interface:
 
 ```bash
 python utility.py -i "input/Semantic_design_template.xlsx" -o "output/semantic_output.yml"
 ```
 
+### 2. BigQuery Table -> CSV + YAML
+You can also generate a semantic design directly from a BigQuery table (schema introspection). This will:
+- Infer a cube whose name is the table name (last segment).
+- Create a CSV scaffold in `input/semantic_<table_name>1.csv` listing all columns as dimensions.
+- Infer a primary key using heuristic order: `<table>_id`, `id`, first column ending `_id`, else first required column.
+- Add a default measure `distinct_<pk>_count` with `type=countDistinct` (if a PK was inferred).
+- Generate the YAML in the specified `-o` path (e.g. `output/semantic_output.yml`).
+- Create a new timestamped log file in `logs/`.
+
+Example:
+```bash
+python utility.py --bq-table bcs-breeding-datasets.velocity.capacity_request -o output/semantic_output.yml
+```
+
+Resulting CSV pattern (example `capacity_request`):
+```
+input/semantic_capacity_request1.csv
+```
+
 ### Command-Line Options
-- `-i`, `--input`: Required. Path to the input Excel file (.xlsx).
-- `-o`, `--output`: Required. Path to the output YAML file (.yml).
+Mutually exclusive input modes:
+- `-i`, `--input`: Path to the input Excel file (.xlsx).
+- `--bq-table`: Fully qualified BigQuery table (`project.dataset.table` or `dataset.table` if default project configured).
+
+Common:
+- `-o`, `--output`: Path to the output YAML file (.yml).
+- `--only-cube`: (Excel mode) Filter to a single cube name.
+- `--no-include-unknown`: (Excel mode) Exclude extra/unrecognized columns from YAML.
+- `--verbose`: (Excel mode) Print sheet detection diagnostics.
+
+### BigQuery Notes
+Authentication relies on your local gcloud / ADC configuration (e.g. `gcloud auth application-default login` or `GOOGLE_APPLICATION_CREDENTIALS`).
+If a table has no obvious primary key, the first required column is used; adjust manually afterward in the generated CSV/YAML. Joins are intentionally omitted for manual editing later.
 
 ## Requirements
 
-This utility requires Python 3.9 or higher and the following Python packages:
-- `pandas`: For data manipulation and analysis.
-- `openpyxl`: For reading Excel files.
-- `PyYAML`: For YAML file generation.
+Python 3.9+ and these packages:
+- `pandas` – data manipulation
+- `openpyxl` – Excel reading
+- `PyYAML` – YAML (currently manual rendering used, but retained)
+- `google-cloud-bigquery` – BigQuery metadata access (only needed for `--bq-table` mode)
 
-You can install the required packages using pip:
-
+Install:
 ```bash
-pip install pandas openpyxl PyYAML
+pip install pandas openpyxl PyYAML google-cloud-bigquery
 ```
 
 ## Conclusion

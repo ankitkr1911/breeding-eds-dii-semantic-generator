@@ -1,0 +1,212 @@
+cubes:
+- description: ""
+  name: line_adv_plan_set_entries
+  sql_table: 'bcs-breeding-datasets.velocity.line_adv_plan_set_entries'
+  title: "Line Adv Plan Set Entries"
+
+  dimensions:
+  #----------joining keys--------------
+  - name: activity_statuses
+    title: "Activity Statuses"
+    sql: '{CUBE}.activity_statuses'
+    type: string
+  - name: submission_name
+    title: "Submission Name"
+    sql: '{CUBE}.submission_name'
+    type: string
+  - name: no_of_plots_assigned
+    title: "No Of Plots Assigned"
+    sql: '{CUBE}.no_of_plots_assigned'
+    type: number
+  - name: constructs
+    title: "Constructs"
+    sql: '{CUBE}.constructs'
+    type: string
+  - name: transgenic_events
+    title: "Transgenic Events"
+    sql: '{CUBE}.transgenic_events'
+    type: string
+  - name: set_created_date
+    title: "Set Created Date"
+    sql: '{CUBE}.set_created_date'
+    type: string
+  - name: is_transgenic
+    title: "Is Transgenic"
+    sql: '{CUBE}.is_transgenic'
+    type: boolean
+  - name: origin
+    title: "Origin"
+    sql: '{CUBE}.origin'
+    type: string
+  - name: line_code
+    title: "Line Code"
+    sql: '{CUBE}.line_code'
+    type: string
+  - name: material_fulfillment_groups
+    title: "Material Fulfillment Groups"
+    sql: '{CUBE}.material_fulfillment_groups'
+    type: string
+  - name: submission_id
+    title: "Submission ID"
+    sql: '{CUBE}.submission_id'
+    type: number
+  - name: pedigree
+    title: "Pedigree"
+    sql: '{CUBE}.pedigree'
+    type: string
+  - name: germplasm_group_id
+    title: "Germplasm Group ID"
+    sql: '{CUBE}.germplasm_group_id'
+    type: string
+  - name: source_str
+    title: "Source Str"
+    sql: '{CUBE}.source_str'
+    type: string
+  - name: catalog_seed_type
+    title: "Catalog Seed Type"
+    sql: '{CUBE}.catalog_seed_type'
+    type: string
+  - name: line_advancement_plan_name
+    title: "Line Advancement Plan Name"
+    sql: '{CUBE}.line_advancement_plan_name'
+    type: string
+  - name: set_instructions
+    title: "Set Instructions"
+    sql: '{CUBE}.set_instructions'
+    type: string
+  - name: instructions
+    title: "Instructions"
+    sql: '{CUBE}.instructions'
+    type: string
+  - name: line_advancement_plan_id
+    title: "Line Advancement Plan ID"
+    sql: '{CUBE}.line_advancement_plan_id'
+    type: number
+  - name: fts_germplasmId
+    title: "Fts Germplasmid"
+    sql: '{CUBE}.fts_germplasmId'
+    type: number
+  - name: velmat_material_id
+    title: "Velmat Material ID"
+    sql: '{CUBE}.velmat_material_id'
+    type: number
+  - name: genetic_material_id
+    title: "Genetic Material ID"
+    sql: '{CUBE}.genetic_material_id'
+    type: number
+  - name: p360_product_id
+    title: "P360 Product ID"
+    sql: '{CUBE}.p360_product_id'
+    type: string
+  - name: population_id
+    title: "Population ID"
+    sql: '{CUBE}.population_id'
+    primaryKey: true
+    type: string
+  - name: germplasm_id
+    title: "Germplasm ID"
+    sql: '{CUBE}.germplasm_id'
+    type: string
+  - name: protocol_name
+    title: "Protocol Name"
+    sql: '{CUBE}.protocol_name'
+    type: string
+  - name: relative_maturity
+    title: "Relative Maturity"
+    sql: '{CUBE}.relative_maturity'
+    type: string
+  - name: access_growerGroups
+    title: "Access Growergroups"
+    sql: '{CUBE}.access_growerGroups'
+    type: string
+  - name: set_name
+    title: "Set Name"
+    sql: '{CUBE}.set_name'
+    type: string
+  - name: sets_material_id
+    title: "Sets Material ID"
+    sql: '{CUBE}.sets_material_id'
+    type: number
+  - name: protocol_id
+    title: "Protocol ID"
+    sql: '{CUBE}.protocol_id'
+    type: number
+  - name: sets_material_name
+    title: "Sets Material Name"
+    sql: '{CUBE}.sets_material_name'
+    type: number
+  - name: entry_number
+    title: "Entry Number"
+    sql: '{CUBE}.entry_number'
+    type: number
+  - name: activity_plan_id
+    title: "Activity Plan ID"
+    sql: '{CUBE}.activity_plan_id'
+    type: number
+  - name: set_id
+    title: "Set ID"
+    sql: '{CUBE}.set_id'
+    type: number
+  - name: capacity_request_id
+    title: "Capacity Request ID"
+    sql: '{CUBE}.capacity_request_id'
+    type: number
+  - name: access_userGroups
+    title: "Access Usergroups"
+    sql: '{CUBE}.access_userGroups'
+    type: string
+  - name: line_type
+    title: "Line Type"
+    sql: '{CUBE}.line_type'
+    type: string
+  - name: catalog_id
+    title: "Catalog ID"
+    sql: '{CUBE}.catalog_id'
+    type: number
+  - name: entry_id
+    title: "Entry ID"
+    sql: '{CUBE}.entry_id'
+    type: number
+  - name: product_type
+    title: "Product Type"
+    sql: '{CUBE}.product_type'
+    type: string
+  - name: set_type
+    title: "Set Type"
+    sql: '{CUBE}.set_type'
+    type: string
+  - name: entry_sequence_number
+    title: "Entry Sequence Number"
+    sql: '{CUBE}.entry_sequence_number'
+    type: number
+  - name: population_name
+    title: "Population Name"
+    sql: '{CUBE}.population_name'
+    type: string
+  - name: material_type
+    title: "Material Type"
+    sql: '{CUBE}.material_type'
+    type: string
+  - name: exposure_category
+    title: "Exposure Category"
+    sql: '{CUBE}.exposure_category'
+    type: string
+  - name: fate_reason_code
+    title: "Fate Reason Code"
+    sql: '{CUBE}.fate_reason_code'
+    type: string
+  - name: fate_date
+    title: "Fate Date"
+    sql: '{CUBE}.fate_date'
+    type: time
+  - name: fate_reason
+    title: "Fate Reason"
+    sql: '{CUBE}.fate_reason'
+    type: string
+
+  measures:
+  - name: count_distinct_population_id
+    title: "Distinct count of Population ID"
+    description: "This is to get Distinct count of Population ID recorded in the velocity application"
+    sql: '{population_id}'
+    type: count_distinct

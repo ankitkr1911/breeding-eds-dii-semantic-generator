@@ -1,13 +1,23 @@
 import argparse
 import sys
 import re
+import traceback
 from pathlib import Path
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List, Tuple, Set
 from datetime import datetime
+
 import pandas as pd
+from google.cloud import bigquery
+
+# Data Catalog is optional; handle gracefully if not installed
+try:
+    from google.cloud import datacatalog_v1
+    DATACATALOG_AVAILABLE = True
+except Exception:
+    DATACATALOG_AVAILABLE = False
 
 # -----------------------------
-# Utilities for cleaning values
+# Utilities for cleaning/formatting
 # -----------------------------
 
 def strip_outer_quotes(s: str) -> str:
@@ -21,405 +31,102 @@ def strip_outer_quotes(s: str) -> str:
     return s
 
 def clean_str(v):
-    if pd.isna(v):
+    if v is None:
         return None
+    try:
+        import math
+        if isinstance(v, float) and math.isnan(v):
+            return None
+    except Exception:
+        pass
     s = str(v).strip()
     if s == "":
         return None
     s = strip_outer_quotes(s)
     return s if s != "" else None
 
-def coerce_bool(v) -> Optional[bool]:
-    if pd.isna(v):
-        return None
-    if isinstance(v, bool):
-        return v
-    s = str(v).strip().lower()
-    if s == "":
-        return None
-    return s in ("true", "1", "yes", "y", "t")
-
-def drop_empty_rows_and_columns(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return df
-    df2 = df.copy()
-    df2 = df2.applymap(lambda x: None if (isinstance(x, str) and x.strip() == "") else x)
-    df2 = df2.dropna(axis=1, how="all").dropna(axis=0, how="all")
-    return df2
-
-def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    raw_cols = [str(c).strip().lower().replace(" ", "_") for c in out.columns]
-    deduped = []
-    seen = {}
-    for c in raw_cols:
-        if c not in seen:
-            seen[c] = 1
-            deduped.append(c)
-        else:
-            seen[c] += 1
-            deduped.append(f"{c}_{seen[c]}")
-    out.columns = deduped
-    return out
-
-# --------------------------------
-# Column aliasing and section logic
-# --------------------------------
-
-REQUIRED: Dict[str, set] = {
-    "cubes": {"table", "sql_table", "name"},
-    "joins": {"primary_table", "secondary_table"},
-    "dimensions": {"name", "sql", "type"},
-    "measures": {"name", "sql", "type"},
-}
-
-ALIASES: Dict[str, Dict[str, str]] = {
-    "cubes": {
-        "table_name": "table",
-        "cube_table": "table",
-        "sqltable": "sql_table",
-        "sql table": "sql_table",
-        "cube_name": "name",
-        "cube": "name",
-        "desc": "description",
-        "data source": "data_source",
-        "data_source": "data_source",
-    },
-    "joins": {
-        "primary table": "primary_table",
-        "secondary table": "secondary_table",
-        "relation": "relationship",
-        "relationship_type": "relationship",
-        "primary_table_key": "primary_table_key_column",
-        "primary key column": "primary_table_key_column",
-        "primary_key_column": "primary_table_key_column",
-        "secondary_table_key": "secondary_table_key_column",
-        "secondary key column": "secondary_table_key_column",
-        "secondary_key_column": "secondary_table_key_column",
-        "join_sql": "sql",
-    },
-    "dimensions": {
-        "primary key": "primarykey",
-        "primary_key": "primarykey",
-        "is_primary_key": "primarykey",
-        "pk": "primarykey",
-        "datatype": "type",
-        "data_type": "type",
-        "cube": "cube",
-        "cube_name": "cube",
-    },
-    "measures": {
-        "aggregation": "type",
-        "aggregate": "type",
-        "agg": "type",
-        "cube": "cube",
-        "cube_name": "cube",
-    },
-}
-
-def remap_known_columns(df: pd.DataFrame, section: str) -> pd.DataFrame:
-    alias_map = ALIASES.get(section, {})
-    rename_map = {}
-    for c in df.columns:
-        key = c.strip().lower()
-        key_compact = key.replace(" ", "_")
-        if key in alias_map:
-            rename_map[c] = alias_map[key]
-        elif key_compact in alias_map:
-            rename_map[c] = alias_map[key_compact]
-    return df.rename(columns=rename_map)
-
-def score_section(df_cols: set, section: str, sheet_name: str) -> int:
-    score = len(REQUIRED[section].intersection(df_cols))
-    lname = sheet_name.lower()
-    if section == "cubes" and "cube" in lname:
-        score += 2
-    if section == "joins" and ("join" in lname or "relationship" in lname):
-        score += 2
-    if section == "dimensions" and ("dimension" in lname or "dim" in lname):
-        score += 2
-    if section == "measures" and ("measure" in lname or "metric" in lname):
-        score += 2
-    return score
-
-def detect_sections(xlsx_path: Path, verbose: bool = False) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    xl = pd.ExcelFile(xlsx_path, engine="openpyxl")
-
-    cubes_df_list: List[pd.DataFrame] = []
-    joins_df_list: List[pd.DataFrame] = []
-    dims_df_list: List[pd.DataFrame] = []
-    measures_df_list: List[pd.DataFrame] = []
-
-    for sheet in xl.sheet_names:
-        raw = pd.read_excel(xlsx_path, sheet_name=sheet, engine="openpyxl")
-        raw = drop_empty_rows_and_columns(raw)
-        if raw.empty:
-            if verbose:
-                print(f"[detect] Skip empty sheet: {sheet}")
-            continue
-
-        ndf = normalize_columns(raw)
-        best_section = None
-        best_score = -1
-        candidates: Dict[str, pd.DataFrame] = {}
-        for section in ("cubes", "joins", "dimensions", "measures"):
-            remapped = remap_known_columns(ndf, section)
-            candidates[section] = remapped
-            sc = score_section(set(remapped.columns), section, sheet)
-            if sc > best_score:
-                best_score = sc
-                best_section = section
-
-        if best_section and best_score >= 2:
-            chosen = candidates[best_section]
-            if verbose:
-                print(f"[detect] Sheet '{sheet}' => {best_section} (score={best_score})")
-            if best_section == "cubes":
-                cubes_df_list.append(chosen)
-            elif best_section == "joins":
-                joins_df_list.append(chosen)
-            elif best_section == "dimensions":
-                dims_df_list.append(chosen)
-            elif best_section == "measures":
-                measures_df_list.append(chosen)
-        else:
-            if verbose:
-                print(f"[detect] Sheet '{sheet}' not confidently recognized (score={best_score}); ignoring.")
-
-    cubes_df = pd.concat(cubes_df_list, ignore_index=True) if cubes_df_list else pd.DataFrame()
-    joins_df = pd.concat(joins_df_list, ignore_index=True) if joins_df_list else pd.DataFrame()
-    dims_df = pd.concat(dims_df_list, ignore_index=True) if dims_df_list else pd.DataFrame()
-    measures_df = pd.concat(measures_df_list, ignore_index=True) if measures_df_list else pd.DataFrame()
-    return cubes_df, joins_df, dims_df, measures_df
-
-# --------------------------
-# Struct building
-# --------------------------
-
-def row_to_dict(row: pd.Series) -> Dict[str, object]:
-    out: Dict[str, object] = {}
-    for k, v in row.items():
-        if isinstance(v, str):
-            vv = clean_str(v)
-        elif isinstance(v, (int, float)) and pd.isna(v):
-            vv = None
-        else:
-            vv = v if not pd.isna(v) else None
-        if vv is not None:
-            out[k] = vv
-    return out
-
 def make_one_line_description(s: Optional[str]) -> Optional[str]:
     if s is None:
         return None
     s = s.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
-    return ' '.join(s.split()).strip()
+    return " ".join(s.split()).strip()
 
-def build_sections(
-    cubes_df: pd.DataFrame,
-    joins_df: pd.DataFrame,
-    dims_df: pd.DataFrame,
-    measures_df: pd.DataFrame,
-    only_cube: Optional[str] = None,
-    include_unknown: bool = True
-) -> List[Dict[str, object]]:
-    # Build cubes with base fields
-    cubes: List[Dict[str, object]] = []
-    name_to_table: Dict[str, str] = {}
-    cube_by_name: Dict[str, Dict[str, object]] = {}
+def titleize_identifier(name: str) -> str:
+    if not name:
+        return ""
+    parts = re.split(r"[_\s]+", name.strip())
+    acronyms = {"id", "api", "url", "ip", "uuid", "ssn", "dna", "rna", "ui", "db"}
+    titled = []
+    for p in parts:
+        lp = p.lower()
+        if lp in acronyms:
+            titled.append(lp.upper())
+        else:
+            titled.append(lp[:1].upper() + lp[1:])
+    return " ".join(titled)
 
-    if not cubes_df.empty:
-        for _, row in cubes_df.iterrows():
-            r = row_to_dict(row)
-            name = clean_str(r.get("name"))
-            if only_cube and name != only_cube:
-                continue
-            table_name = clean_str(r.get("table"))
-            if name and table_name:
-                name_to_table[name] = table_name
+# --------------------------
+# Log file creation
+# --------------------------
 
-            cube_obj: Dict[str, object] = {}
-            # Known fields in desired order
-            desc = r.get("description")
-            if isinstance(desc, str):
-                desc = make_one_line_description(desc)
-            if desc is not None:
-                cube_obj["description"] = desc
-            if name is not None:
-                cube_obj["name"] = name
-            sql_tbl = r.get("sql_table")
-            if isinstance(sql_tbl, str):
-                sql_tbl = strip_outer_quotes(sql_tbl)
-            if sql_tbl is not None:
-                cube_obj["sql_table"] = sql_tbl
-            title = r.get("title")
-            if title is not None:
-                cube_obj["title"] = title
+DEFAULT_LOG_MD_TEMPLATE_MULTI = """### BigQuery to Semantic Run
 
-            # Include any extra fields if requested
-            if include_unknown:
-                for k, v in r.items():
-                    if k not in ("description", "name", "sql_table", "title", "table"):
-                        cube_obj[k] = v
+Timestamp: {TS}
 
-            # Initialize nested lists
-            cube_obj["joins"] = []
-            cube_obj["dimensions"] = []
-            cube_obj["measures"] = []
+Processed cubes:
+{CUBE_LIST}
 
-            cubes.append(cube_obj)
-            if name:
-                cube_by_name[name] = cube_obj
+--- ## Generated YAMLs
 
-    # Helper: choose target cube for a row
-    def pick_target_cube_for_primary(primary_table: Optional[str]) -> Optional[Dict[str, object]]:
-        if not cubes:
-            return None
-        # 1) If only_cube specified
-        if only_cube and only_cube in cube_by_name:
-            # Filter joins by primary table if provided
-            if primary_table:
-                allowed = {only_cube}
-                if only_cube in name_to_table:
-                    allowed.add(name_to_table[only_cube])
-                if primary_table not in allowed:
-                    return None
-            return cube_by_name[only_cube]
-        # 2) If exactly one cube, attach there
-        if len(cubes) == 1:
-            return cubes[0]
-        # 3) Try match by primary_table with cube name or base table
-        if primary_table:
-            if primary_table in cube_by_name:
-                return cube_by_name[primary_table]
-            for cname, t in name_to_table.items():
-                if t == primary_table:
-                    return cube_by_name.get(cname)
+{YAML_BLOCKS}
+
+--- ## Notes
+- Primary key detected from Data Catalog tags or column descriptions; falls back to naming heuristics.
+- Default measure is count_distinct of the detected primary key.
+- Joins and Views can be added in the CSV and re-applied via --from-csv mode.
+"""
+
+def create_new_log_multi(logs_dir: Path, yamls_by_cube: Dict[str, str], error_log_path: Optional[Path] = None) -> Path:
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    log_filename = f"log_{timestamp}.md"
+    log_path = logs_dir / log_filename
+
+    cube_list = "\n".join([f"- {c}" for c in sorted(yamls_by_cube.keys())]) or "(none)"
+    yaml_blocks = []
+    for c, y in yamls_by_cube.items():
+        yaml_blocks.append(f"### {c}\n\n```yaml\n{y.strip()}\n```")
+    if error_log_path:
+        yaml_blocks.append(f"\n---\nErrors were captured in: {error_log_path}\n")
+
+    content = DEFAULT_LOG_MD_TEMPLATE_MULTI.format(
+        TS=timestamp,
+        CUBE_LIST=cube_list,
+        YAML_BLOCKS="\n\n".join(yaml_blocks),
+    )
+    log_path.write_text(content, encoding="utf-8")
+    return log_path
+
+def create_error_log(logs_dir: Path, errors: List[Tuple[str, str]]) -> Optional[Path]:
+    if not errors:
         return None
-
-    # Attach joins
-    if not joins_df.empty:
-        for _, row in joins_df.iterrows():
-            r = row_to_dict(row)
-            primary_table = clean_str(r.get("primary_table"))
-            secondary_table = clean_str(r.get("secondary_table"))
-            relationship = clean_str(r.get("relationship"))
-            pk = clean_str(r.get("primary_table_key_column"))
-            sk = clean_str(r.get("secondary_table_key_column"))
-            sql_expr = clean_str(r.get("sql"))
-            if not sql_expr and pk and sk:
-                sql_expr = f"{pk}={sk}"
-
-            target_cube = pick_target_cube_for_primary(primary_table)
-            if target_cube is None:
-                if len(cubes) != 1:
-                    continue
-                target_cube = cubes[0]
-
-            join_obj: Dict[str, object] = {}
-            if secondary_table is not None:
-                join_obj["name"] = secondary_table
-            if relationship is not None:
-                join_obj["relationship"] = relationship
-            if sql_expr is not None:
-                join_obj["sql"] = sql_expr
-
-            if include_unknown:
-                for k, v in r.items():
-                    if k not in ("primary_table", "secondary_table", "relationship", "primary_table_key_column", "secondary_table_key_column", "sql"):
-                        join_obj[k] = v
-
-            target_cube["joins"].append(join_obj)
-
-    # Attach dimensions
-    if not dims_df.empty:
-        for _, row in dims_df.iterrows():
-            r = row_to_dict(row)
-            dim_cube_hint = clean_str(r.get("cube"))
-
-            target_cube = None
-            if only_cube and only_cube in cube_by_name:
-                target_cube = cube_by_name[only_cube]
-            elif len(cubes) == 1:
-                target_cube = cubes[0]
-            elif dim_cube_hint and dim_cube_hint in cube_by_name:
-                target_cube = cube_by_name[dim_cube_hint]
-
-            if target_cube is None:
-                continue
-
-            dim_obj: Dict[str, object] = {}
-            if r.get("name") is not None:
-                dim_obj["name"] = r.get("name")
-            if r.get("title") is not None:
-                dim_obj["title"] = r.get("title")
-            desc = r.get("description")
-            if isinstance(desc, str):
-                desc = make_one_line_description(desc)
-            if desc is not None:
-                dim_obj["description"] = desc
-            if r.get("sql") is not None:
-                dim_obj["sql"] = r.get("sql")
-            pk_val = coerce_bool(r.get("primarykey"))
-            if pk_val is not None:
-                dim_obj["primaryKey"] = bool(pk_val)
-            if r.get("type") is not None:
-                dim_obj["type"] = r.get("type")
-
-            if include_unknown:
-                for k, v in r.items():
-                    if k not in ("name", "title", "description", "sql", "type", "primarykey", "cube"):
-                        dim_obj[k] = v
-
-            target_cube["dimensions"].append(dim_obj)
-
-    # Attach measures
-    if not measures_df.empty:
-        for _, row in measures_df.iterrows():
-            r = row_to_dict(row)
-            meas_cube_hint = clean_str(r.get("cube"))
-
-            target_cube = None
-            if only_cube and only_cube in cube_by_name:
-                target_cube = cube_by_name[only_cube]
-            elif len(cubes) == 1:
-                target_cube = cubes[0]
-            elif meas_cube_hint and meas_cube_hint in cube_by_name:
-                target_cube = cube_by_name[meas_cube_hint]
-
-            if target_cube is None:
-                continue
-
-            meas_obj: Dict[str, object] = {}
-            if r.get("name") is not None:
-                meas_obj["name"] = r.get("name")
-            if r.get("title") is not None:
-                meas_obj["title"] = r.get("title")
-            desc = r.get("description")
-            if isinstance(desc, str):
-                desc = make_one_line_description(desc)
-            if desc is not None:
-                meas_obj["description"] = desc
-            if r.get("sql") is not None:
-                meas_obj["sql"] = r.get("sql")
-            if r.get("type") is not None:
-                meas_obj["type"] = r.get("type")
-
-            if include_unknown:
-                for k, v in r.items():
-                    if k not in ("name", "title", "description", "sql", "type", "cube"):
-                        meas_obj[k] = v
-
-            target_cube["measures"].append(meas_obj)
-
-    return cubes
+    err_dir = logs_dir / "errors"
+    err_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    err_path = err_dir / f"errors_{timestamp}.log"
+    lines = []
+    for cube, err_text in errors:
+        lines.append(f"=== Cube: {cube} ===")
+        lines.append(err_text)
+        lines.append("")
+    err_path.write_text("\n".join(lines), encoding="utf-8")
+    return err_path
 
 # --------------------------
 # Manual YAML text rendering
 # --------------------------
 
 def dq(s: str) -> str:
-    # Double-quoted YAML string with escaped quotes and single-line
     s = '' if s is None else str(s)
     s = s.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
     s = ' '.join(s.split())
@@ -427,7 +134,6 @@ def dq(s: str) -> str:
     return f"\"{s}\""
 
 def sq(s: str) -> str:
-    # Single-quoted YAML string; escape single quotes by doubling
     s = '' if s is None else str(s)
     s = s.replace("'", "''")
     return f"'{s}'"
@@ -444,24 +150,19 @@ def render_yaml_text(cubes: List[Dict[str, object]]) -> str:
 
     lines.append("cubes:")
     for cube in cubes:
-        # cube header
         lines.append("- " + (f'description: {dq(cube["description"])}' if cube.get("description") is not None else 'description: ""'))
-        # name
         name = cube.get("name")
         if is_simple_unquoted(name):
             lines.append(f"{indent2}name: {name}")
         else:
             lines.append(f"{indent2}name: {dq(name) if name is not None else dq('')}")
-        # sql_table
         sql_table = cube.get("sql_table")
         if sql_table is not None:
             lines.append(f"{indent2}sql_table: {sq(sql_table)}")
-        # optional title
         title = cube.get("title")
         if title is not None:
             lines.append(f"{indent2}title: {dq(title)}")
 
-        # blank line before joins
         if cube.get("joins"):
             lines.append("")
             lines.append(f"{indent2}joins:")
@@ -473,7 +174,6 @@ def render_yaml_text(cubes: List[Dict[str, object]]) -> str:
                 if j.get("sql") is not None:
                     lines.append(f"{indent4}sql: {sq(j['sql'])}")
 
-        # blank line before dimensions
         if cube.get("dimensions"):
             lines.append("")
             lines.append(f"{indent2}dimensions:")
@@ -496,7 +196,6 @@ def render_yaml_text(cubes: List[Dict[str, object]]) -> str:
                     else:
                         lines.append(f"{indent4}type: {dq(tval)}")
 
-        # blank line before measures
         if cube.get("measures"):
             lines.append("")
             lines.append(f"{indent2}measures:")
@@ -519,140 +218,424 @@ def render_yaml_text(cubes: List[Dict[str, object]]) -> str:
     return "\n".join(lines) + "\n"
 
 # --------------------------
-# Log file creation (new per run)
+# BigQuery and Data Catalog helpers
 # --------------------------
 
-DEFAULT_LOG_MD_TEMPLATE = """### Overview
-This log documents the development and progress of the Excel to YAML (Semantic) Utility project. The utility converts Excel templates into structured YAML files for data modeling and semantic design.
+SEMANTIC_CSV_HEADERS = [
+    "dimension_name", "dimension_measure_flag", "dimension_title", "dimension_description",
+    "dimension_sql", "primary_key", "dimension_type",
+    "cube_name", "cube_sql_table", "cube_description", "cube_title", "cube_data_source",
+    "view_name", "view_title", "view_description", "visible_in_view", "view_folder_name",
+    "join_primary_table", "join_secondary_table", "join_sql", "join_relationship",
+]
 
---- ## Log Entries
+BQS_TYPE_TO_SEMANTIC = {
+    "STRING": "string", "BYTES": "string",
+    "INT64": "number", "INTEGER": "number",
+    "FLOAT64": "number", "FLOAT": "number",
+    "NUMERIC": "number", "BIGNUMERIC": "number",
+    "BOOL": "boolean", "BOOLEAN": "boolean",
+    "TIMESTAMP": "time", "DATE": "time", "DATETIME": "time", "TIME": "time",
+    "GEOGRAPHY": "string",
+}
 
-#
-- **Initial Setup**
-  - Created the project repository.
-  - Set up the development environment with Python 3.9+.
-  - Installed required packages: `pandas`, `openpyxl`, `PyYAML`.
+def parse_bq_table_id(table_id: str) -> Tuple[str, str, str]:
+    parts = table_id.split(".")
+    if len(parts) != 3:
+        raise ValueError(f"BigQuery table must be in 'project.dataset.table' form: {table_id}")
+    return parts[0], parts[1], parts[2]
 
-#
-- **Feature Implementation**
-  - Developed core functionality to read Excel files using `pandas`.
-  - Implemented normalization of column names to ensure consistency across different sheets.
-  - Created functions to handle cubes, joins, dimensions, and measures.
+def extract_data_source_from_project(project: str) -> str:
+    tokens = project.split("-")
+    if len(tokens) >= 2:
+        return tokens[1]
+    return project
 
-#
-- **YAML Generation**
-  - Implemented logic to convert the structured data into YAML format.
-  - Ensured proper indentation and formatting for readability.
-  - Added functionality to handle optional parameters for filtering cubes.
+def fetch_bq_schema(table_id: str, verbose: bool = False) -> List[bigquery.SchemaField]:
+    client = bigquery.Client()
+    tbl = client.get_table(table_id)
+    if verbose:
+        print(f"[bq] Loaded table: {tbl.full_table_id} with {len(tbl.schema)} columns")
+    return tbl.schema
 
-#
-- **Command-Line Interface**
-  - Developed a command-line interface (CLI) using `argparse` for user interaction.
-  - Added options for input and output file paths, filtering by cube, and verbose output.
+def lookup_datacatalog_entry_linked(project: str, dataset: str, table: str, verbose: bool = False):
+    if not DATACATALOG_AVAILABLE:
+        if verbose:
+            print("[dc] Data Catalog client not available; skipping PK tag lookup.")
+        return None
+    client = datacatalog_v1.DataCatalogClient()
+    linked_resource = f"//bigquery.googleapis.com/projects/{project}/datasets/{dataset}/tables/{table}"
+    try:
+        entry = client.lookup_entry(request={"linked_resource": linked_resource})
+        if verbose:
+            print(f"[dc] Found Data Catalog entry: {entry.name}")
+        return entry
+    except Exception as e:
+        if verbose:
+            print(f"[dc] No Data Catalog entry found for {linked_resource}: {e}")
+        return None
 
-#
-- **Testing and Validation**
-  - Validated the output YAML files against sample input Excel templates.
-  - Fixed issues related to formatting and unnecessary spaces in descriptions.
+def extract_pk_from_datacatalog(entry, verbose: bool = False) -> Set[str]:
+    pk_cols: Set[str] = set()
+    if entry is None or not DATACATALOG_AVAILABLE:
+        return pk_cols
+    client = datacatalog_v1.DataCatalogClient()
+    try:
+        for tag in client.list_tags(parent=entry.name):
+            def field_truthy(tag_fields: Dict[str, datacatalog_v1.TagField]) -> bool:
+                for k, tf in tag_fields.items():
+                    lk = k.lower()
+                    if lk in ("primary_key", "is_pk", "pk"):
+                        if getattr(tf, "bool_value", False) is True:
+                            return True
+                        sv = (getattr(tf, "string_value", "") or "").strip().lower()
+                        if sv in ("true", "yes", "y", "1"):
+                            return True
+                        enum = getattr(tf, "enum_value", None)
+                        if enum and enum.display_name and enum.display_name.lower() in ("true", "yes", "pk"):
+                            return True
+                return False
 
-#
-- **Documentation**
-  - Created a README file detailing the utility's features, usage, and installation instructions.
-  - Documented the structure of the Excel template and the expected output format.
+            try:
+                fields = tag.fields
+            except Exception:
+                fields = {}
+            if field_truthy(fields):
+                col = tag.column.strip() if getattr(tag, "column", None) else None
+                if col:
+                    pk_cols.add(col)
+                else:
+                    if verbose:
+                        print("[dc] PK tag at table level; column unspecified. Ignoring.")
+    except Exception as e:
+        if verbose:
+            print(f"[dc] Error reading tags: {e}")
+    return pk_cols
 
-#
-- **Final Review**
-  - Reviewed the code for optimization and readability.
-  - Ensured all features are functioning correctly and documentation is complete.
-  - Prepared for project handoff or deployment.
+def detect_primary_key_columns(table_id: str, schema: List[bigquery.SchemaField], verbose: bool = False) -> List[str]:
+    project, dataset, table = parse_bq_table_id(table_id)
 
---- ## Output
+    entry = lookup_datacatalog_entry_linked(project, dataset, table, verbose=verbose)
+    pk_cols = extract_pk_from_datacatalog(entry, verbose=verbose)
+    if pk_cols:
+        if verbose:
+            print(f"[pk] Data Catalog tags indicate PK columns: {sorted(pk_cols)}")
+        return sorted(pk_cols)
 
-The generated YAML file from the utility currently looks like this:
+    desc_pks: List[str] = []
+    for f in schema:
+        desc = (getattr(f, "description", None) or "").lower()
+        if "primary key" in desc or re.search(r"\bpk\b", desc):
+            desc_pks.append(f.name)
+    if desc_pks:
+        if verbose:
+            print(f"[pk] Column descriptions indicate PK columns: {desc_pks}")
+        return desc_pks
 
-```yaml
-{YAML_CONTENT}
-```
+    heuristics: List[str] = []
+    exact = f"{table}_id"
+    for f in schema:
+        if f.name == exact:
+            heuristics = [f.name]
+            break
+    if not heuristics:
+        ends = [f.name for f in schema if f.name.endswith("_id")]
+        if ends:
+            heuristics = [ends[0]]
+    if not heuristics:
+        ids = [f.name for f in schema if f.name.lower() == "id"]
+        if ids:
+            heuristics = [ids[0]]
 
---- ## Next Steps
-- Gather user feedback on the utility.
-- Plan for future enhancements based on user requirements.
-- Consider adding support for additional output formats (e.g., JSON).
+    if verbose:
+        print(f"[pk] Heuristic PK columns: {heuristics if heuristics else 'NONE'}")
+    return heuristics
 
---- ## Notes
-- Ensure to regularly update this log with new developments, issues encountered, and resolutions.
-- Keep track of any changes made to the requirements or scope of the project.
+# --------------------------
+# CSV creation and YAML build
+# --------------------------
 
----
-"""
+def generate_rows_for_table(
+    table_id: str,
+    cube_title_override: Optional[str] = None,
+    cube_description: Optional[str] = None,
+    verbose: bool = False,
+) -> Tuple[str, List[Dict[str, object]]]:
+    project, dataset, table = parse_bq_table_id(table_id)
+    schema = fetch_bq_schema(table_id, verbose=verbose)
+    cube_name = table
+    cube_sql_table = f"{project}.{dataset}.{table}"
+    cube_title_auto = titleize_identifier(cube_name) if not cube_title_override else cube_title_override
+    cube_desc_final = cube_description or None
+    cube_data_source = extract_data_source_from_project(project)
 
-def create_new_log(logs_dir: Path, yaml_text: str) -> Path:
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    log_filename = f"log_{timestamp}.md"
-    log_path = logs_dir / log_filename
-    content = DEFAULT_LOG_MD_TEMPLATE.replace("{YAML_CONTENT}", yaml_text.strip())
-    log_path.write_text(content, encoding="utf-8")
-    return log_path
+    pk_cols = detect_primary_key_columns(table_id, schema, verbose=verbose)
+    pk = pk_cols[0] if pk_cols else None
+
+    rows: List[Dict[str, object]] = []
+
+    def bq_type_to_semantic(ftype: str) -> str:
+        return BQS_TYPE_TO_SEMANTIC.get(ftype.upper(), "string")
+
+    for field in schema:
+        dim_title_auto = titleize_identifier(field.name)
+        rows.append({
+            "dimension_name": field.name,
+            "dimension_measure_flag": "dimension",
+            "dimension_title": dim_title_auto,
+            "dimension_description": None,
+            "dimension_sql": f"{{CUBE}}.{field.name}",
+            "primary_key": "TRUE" if (pk and field.name == pk) else "",
+            "dimension_type": bq_type_to_semantic(field.field_type),
+            "cube_name": cube_name,
+            "cube_sql_table": cube_sql_table,
+            "cube_description": cube_desc_final,
+            "cube_title": cube_title_auto,
+            "cube_data_source": cube_data_source,
+            "view_name": None,
+            "view_title": None,
+            "view_description": None,
+            "visible_in_view": None,
+            "view_folder_name": None,
+            "join_primary_table": cube_name,
+            "join_secondary_table": None,
+            "join_sql": None,
+            "join_relationship": None,
+        })
+
+    # Default measure: distinct count of PK with descriptive text and dimension-style SQL reference
+    if pk:
+        pk_title = titleize_identifier(pk)
+        measure_title = f"Distinct count of {pk_title}"
+        # If dataset is present, mention it as "<dataset> application"
+        app_phrase = f" recorded in the {dataset} application" if dataset else ""
+        measure_desc = f"This is to get Distinct count of {pk_title}{app_phrase}"
+        rows.append({
+            "dimension_name": f"count_distinct_{pk}",
+            "dimension_measure_flag": "measure",
+            "dimension_title": measure_title,
+            "dimension_description": measure_desc,
+            "dimension_sql": f"{{{pk}}}",  # reference the dimension, not {CUBE}.col
+            "primary_key": "",
+            "dimension_type": "count_distinct",
+            "cube_name": cube_name,
+            "cube_sql_table": cube_sql_table,
+            "cube_description": cube_desc_final,
+            "cube_title": cube_title_auto,
+            "cube_data_source": cube_data_source,
+            "view_name": None,
+            "view_title": None,
+            "view_description": None,
+            "visible_in_view": None,
+            "view_folder_name": None,
+            "join_primary_table": cube_name,
+            "join_secondary_table": None,
+            "join_sql": None,
+            "join_relationship": None,
+        })
+
+    return cube_name, rows
+
+def upsert_rows_into_csv(csv_path: Path, rows: List[Dict[str, object]], cube_name: str) -> None:
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    df_new = pd.DataFrame(rows, columns=SEMANTIC_CSV_HEADERS)
+    if csv_path.exists():
+        df = pd.read_csv(csv_path)
+        if not set(SEMANTIC_CSV_HEADERS).issubset(set(df.columns)):
+            df = pd.DataFrame(columns=SEMANTIC_CSV_HEADERS)
+        df = df[df["cube_name"] != cube_name]
+        df_all = pd.concat([df, df_new], ignore_index=True)
+    else:
+        df_all = df_new
+    df_all = df_all.reindex(columns=SEMANTIC_CSV_HEADERS)
+    df_all.to_csv(csv_path, index=False)
+
+def build_cubes_from_semantic_csv(csv_path: Path, only_cubes: Optional[Set[str]] = None) -> List[Dict[str, object]]:
+    df = pd.read_csv(csv_path)
+    df = df.dropna(how="all")
+    cubes: List[Dict[str, object]] = []
+
+    if "cube_name" not in df.columns:
+        return cubes
+
+    grouped = df.groupby("cube_name", dropna=True)
+    for cube_name, gdf in grouped:
+        if only_cubes and cube_name not in only_cubes:
+            continue
+
+        cube_sql_table = clean_str(gdf["cube_sql_table"].dropna().iloc[0]) if "cube_sql_table" in gdf.columns else None
+        cube_title = clean_str(gdf["cube_title"].dropna().iloc[0]) if "cube_title" in gdf.columns and not gdf["cube_title"].dropna().empty else None
+        cube_desc = make_one_line_description(clean_str(gdf["cube_description"].dropna().iloc[0])) if "cube_description" in gdf.columns and not gdf["cube_description"].dropna().empty else None
+
+        cube: Dict[str, object] = {
+            "description": cube_desc or "",
+            "name": cube_name,
+            "sql_table": cube_sql_table,
+        }
+        if cube_title:
+            cube["title"] = cube_title
+        cube["joins"] = []
+        cube["dimensions"] = []
+        cube["measures"] = []
+
+        # Joins
+        join_cols = ["join_primary_table", "join_secondary_table", "join_sql", "join_relationship"]
+        if all(col in gdf.columns for col in join_cols):
+            jdf = gdf.copy()
+            jdf["join_secondary_table"] = jdf["join_secondary_table"].apply(clean_str)
+            jdf["join_sql"] = jdf["join_sql"].apply(clean_str)
+            jdf["join_relationship"] = jdf["join_relationship"].apply(clean_str)
+            jdf = jdf.dropna(subset=["join_secondary_table", "join_sql"], how="all")
+            seen = set()
+            for _, jr in jdf.iterrows():
+                sec = jr.get("join_secondary_table")
+                sql = jr.get("join_sql")
+                rel = jr.get("join_relationship")
+                key = (sec or "", sql or "", rel or "")
+                if not any([sec, sql, rel]):
+                    continue
+                if key in seen:
+                    continue
+                seen.add(key)
+                j = {}
+                if sec: j["name"] = sec
+                if rel: j["relationship"] = rel
+                if sql: j["sql"] = sql
+                cube["joins"].append(j)
+
+        # Dimensions and measures
+        for _, r in gdf.iterrows():
+            flag = clean_str(r.get("dimension_measure_flag"))
+            name = clean_str(r.get("dimension_name"))
+            title = clean_str(r.get("dimension_title"))
+            desc = make_one_line_description(clean_str(r.get("dimension_description")))
+            sql = clean_str(r.get("dimension_sql"))
+            typ = clean_str(r.get("dimension_type"))
+            pk = clean_str(r.get("primary_key"))
+
+            if flag == "dimension":
+                dim = {"name": name}
+                if title: dim["title"] = title
+                if desc: dim["description"] = desc
+                if sql: dim["sql"] = sql
+                if typ: dim["type"] = typ
+                if pk and pk.upper() == "TRUE":
+                    dim["primaryKey"] = True
+                cube["dimensions"].append(dim)
+
+            elif flag == "measure":
+                meas = {"name": name}
+                if title: meas["title"] = title
+                if desc: meas["description"] = desc
+                if sql: meas["sql"] = sql
+                if typ: meas["type"] = typ
+                cube["measures"].append(meas)
+
+        cubes.append(cube)
+
+    return cubes
+
+def write_yaml_per_cube(cubes: List[Dict[str, object]], output_dir: Path) -> Dict[str, str]:
+    yamls_by_cube: Dict[str, str] = {}
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for cube in cubes:
+        name = cube.get("name")
+        yaml_text = render_yaml_text([cube])
+        yamls_by_cube[name] = yaml_text
+        out_path = output_dir / f"{name}.yml"
+        out_path.write_text(yaml_text, encoding="utf-8")
+        print(f"Wrote YAML to: {out_path}")
+    return yamls_by_cube
 
 # ---------------
 # Command-line app
 # ---------------
 
 def main():
-    """
-    CLI entry point.
-    Example:
-      python excel_to_yaml.py -i ./input/template.xlsx -o ./output/capacity_request.yml --only-cube capacity_request --verbose
-    """
-    parser = argparse.ArgumentParser(description="Convert Excel semantic template to YAML text with nested joins/dimensions/measures under cubes.")
-    parser.add_argument("-i", "--input", required=True, help="Path to input Excel file (.xlsx)")
-    parser.add_argument("-o", "--output", required=True, help="Path to output YAML file (.yml)")
-    parser.add_argument("--only-cube", help="If set, include only this cube by name and filter joins/dimensions/measures accordingly.")
-    parser.add_argument("--no-include-unknown", action="store_true", help="Do not include unknown/extra columns in the output YAML.")
-    parser.add_argument("--verbose", action="store_true", help="Print detection details.")
+    parser = argparse.ArgumentParser(
+        description="Generate/append semantic CSV and parallel YAMLs from one or more BigQuery tables, or rebuild YAMLs from an existing semantic CSV."
+    )
+    # Multiple tables: pass --bq-table multiple times or use --bq-tables comma-separated
+    parser.add_argument("--bq-table", action="append", help="BigQuery table in project.dataset.table form. Can be passed multiple times.")
+    parser.add_argument("--bq-tables", help="Comma-separated BigQuery tables in project.dataset.table form.")
+    parser.add_argument("--from-csv", help="Path to an existing semantic CSV file to build YAMLs for all cubes found")
+    parser.add_argument("-i", "--input-dir", default="./input", help="Folder where the semantic CSV will be written/updated")
+    parser.add_argument("--output-dir", default="./output", help="Folder where YAML files will be written")
+    parser.add_argument("--cube-title", help="Optional cube title override (applies to all cubes in this run; otherwise auto-title from cube_name)")
+    parser.add_argument("--cube-description", help="Optional cube description to store in CSV/YAML (applies to all cubes in this run)")
+    parser.add_argument("--verbose", action="store_true", help="Print details")
     args = parser.parse_args()
 
-    input_path = Path(args.input)
-    output_path = Path(args.output)
+    input_dir = Path(args.input_dir)
+    output_dir = Path(args.output_dir)
 
     # Determine logs directory at the same level as 'input' and 'output' folders
-    # If output path is like <root>/output/*.yml, use <root>/logs
-    if output_path.parent.name.lower() == "output":
-        logs_dir = output_path.parent.parent / "logs"
+    if output_dir.name.lower() == "output":
+        logs_dir = output_dir.parent / "logs"
     else:
-        # Fallback: sibling 'logs' next to output file's parent
-        logs_dir = output_path.parent / "logs"
+        logs_dir = output_dir / "logs"
 
-    if not input_path.exists():
-        print(f"Error: Input file not found: {input_path}", file=sys.stderr)
+    # Collect table list
+    tables: List[str] = []
+    if args.bq_table:
+        tables.extend(args.bq_table)
+    if args.bq_tables:
+        for t in args.bq_tables.split(","):
+            t = t.strip()
+            if t:
+                tables.append(t)
+
+    # Mode: from existing CSV (rebuild YAMLs for all cubes in CSV)
+    if args.from_csv and not tables:
+        csv_path = Path(args.from_csv)
+        if not csv_path.exists():
+            print(f"Error: CSV file not found: {csv_path}", file=sys.stderr)
+            sys.exit(1)
+        cubes = build_cubes_from_semantic_csv(csv_path, only_cubes=None)
+        yamls_by_cube = write_yaml_per_cube(cubes, output_dir)
+        err_log_path = None
+        log_path = create_new_log_multi(logs_dir, yamls_by_cube, err_log_path)
+        print(f"Created log file: {log_path}")
+        return
+
+    # Mode: BigQuery -> append/update CSV + write YAMLs for provided tables
+    if not tables:
+        print("Error: Provide either --from-csv or one/more tables via --bq-table/--bq-tables", file=sys.stderr)
         sys.exit(1)
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    combined_csv_path = input_dir / "semantic_all.csv"
+    errors: List[Tuple[str, str]] = []
+    processed_cubes: List[str] = []
 
-    cubes_df, joins_df, dims_df, measures_df = detect_sections(input_path, verbose=args.verbose)
-    if cubes_df.empty and joins_df.empty and dims_df.empty and measures_df.empty:
-        print("Error: No recognizable sections found. Check your headers or use --verbose to see detection details.", file=sys.stderr)
+    for table_id in tables:
+        try:
+            cube_name, rows = generate_rows_for_table(
+                table_id=table_id,
+                cube_title_override=args.cube_title,
+                cube_description=args.cube_description,
+                verbose=args.verbose,
+            )
+            upsert_rows_into_csv(combined_csv_path, rows, cube_name)
+            processed_cubes.append(cube_name)
+            print(f"Upserted CSV rows for cube: {cube_name}")
+        except Exception as e:
+            err_text = f"Exception while processing '{table_id}': {e}\n{traceback.format_exc()}"
+            print(err_text, file=sys.stderr)
+            errors.append((table_id, err_text))
+
+    if not combined_csv_path.exists():
+        print("Error: Combined CSV not created; no successful tables processed.", file=sys.stderr)
         sys.exit(1)
 
-    cubes = build_sections(
-        cubes_df=cubes_df,
-        joins_df=joins_df,
-        dims_df=dims_df,
-        measures_df=measures_df,
-        only_cube=args.only_cube,
-        include_unknown=(not args.no_include_unknown),
-    )
+    only_set = set(processed_cubes) if processed_cubes else None
+    cubes = build_cubes_from_semantic_csv(combined_csv_path, only_cubes=only_set)
+    yamls_by_cube = write_yaml_per_cube(cubes, output_dir)
 
-    yaml_text = render_yaml_text(cubes)
-
-    # Write YAML text to output file
-    output_path.write_text(yaml_text, encoding="utf-8")
-    print(f"Wrote YAML to: {output_path}")
-
-    # Create a NEW logs/log_YYYYMMDD_HHMMSS.md file with latest output
-    new_log_path = create_new_log(logs_dir, yaml_text)
-    print(f"Created log file: {new_log_path}")
+    err_log_path = create_error_log(logs_dir, errors)
+    log_path = create_new_log_multi(logs_dir, yamls_by_cube, err_log_path)
+    print(f"Created log file: {log_path}")
+    if err_log_path:
+        print(f"Errors captured in: {err_log_path}")
 
 if __name__ == "__main__":
     main()
