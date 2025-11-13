@@ -1,0 +1,24 @@
+cubes:
+- description: ""
+  name: dim_product
+  sql_table: 'bcs-brd-data-innovation-np.dimensions.dim_product'
+  title: "Dim Product"
+
+  dimensions:
+  #----------joining keys--------------
+  - name: head_product
+    title: "Head Product"
+    sql: '{CUBE}.head_product'
+    type: string
+  - name: head_pedigree
+    title: "Head Pedigree"
+    sql: '{CUBE}.head_pedigree'
+    type: string
+  - name: head_precom
+    title: "Head Precom"
+    sql: '{CUBE}.head_precom'
+    type: string
+  - name: source_record
+    title: "Source Record"
+    sql: '{CUBE}.source_record'
+    type: string

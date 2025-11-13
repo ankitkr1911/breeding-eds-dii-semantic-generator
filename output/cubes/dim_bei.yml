@@ -1,0 +1,88 @@
+cubes:
+- description: ""
+  name: dim_bei
+  sql_table: 'bcs-brd-data-innovation-np.dimensions.dim_bei'
+  title: "Dim Bei"
+
+  dimensions:
+  #----------joining keys--------------
+  - name: bei_check_market
+    title: "Bei Check Market"
+    sql: '{CUBE}.bei_check_market'
+    type: string
+  - name: bei_check_product_segment
+    title: "Bei Check Product Segment"
+    sql: '{CUBE}.bei_check_product_segment'
+    type: string
+  - name: bioeconomic_index_ym
+    title: "Bioeconomic Index Ym"
+    sql: '{CUBE}.bioeconomic_index_ym'
+    type: number
+  - name: bei_head_market
+    title: "Bei Head Market"
+    sql: '{CUBE}.bei_head_market'
+    type: string
+  - name: bei_head_product_segment
+    title: "Bei Head Product Segment"
+    sql: '{CUBE}.bei_head_product_segment'
+    type: string
+  - name: bei_head_line_name
+    title: "Bei Head Line Name"
+    sql: '{CUBE}.bei_head_line_name'
+    type: string
+  - name: bei_head_product
+    title: "Bei Head Product"
+    sql: '{CUBE}.bei_head_product'
+    type: string
+  - name: bei_head_market_segment
+    title: "Bei Head Market Segment"
+    sql: '{CUBE}.bei_head_market_segment'
+    type: string
+  - name: bei_head_precom
+    title: "Bei Head Precom"
+    sql: '{CUBE}.bei_head_precom'
+    type: string
+  - name: bei_head_cm_rm
+    title: "Bei Head Cm RM"
+    sql: '{CUBE}.bei_head_cm_rm'
+    type: number
+  - name: bei_head_entry_type
+    title: "Bei Head Entry Type"
+    sql: '{CUBE}.bei_head_entry_type'
+    type: string
+  - name: bei_head_pedigree
+    title: "Bei Head Pedigree"
+    sql: '{CUBE}.bei_head_pedigree'
+    type: string
+  - name: bei_ym_delta
+    title: "Bei Ym Delta"
+    sql: '{CUBE}.bei_ym_delta'
+    type: number
+  - name: bei_ag_delta
+    title: "Bei Ag Delta"
+    sql: '{CUBE}.bei_ag_delta'
+    type: number
+  - name: bei_check_precom
+    title: "Bei Check Precom"
+    sql: '{CUBE}.bei_check_precom'
+    type: string
+  - name: bei_check_product
+    title: "Bei Check Product"
+    sql: '{CUBE}.bei_check_product'
+    type: string
+  - name: bei_check_line_name
+    title: "Bei Check Line Name"
+    sql: '{CUBE}.bei_check_line_name'
+    type: string
+  - name: bei_check_pedigree
+    title: "Bei Check Pedigree"
+    sql: '{CUBE}.bei_check_pedigree'
+    type: string
+  - name: bei_check_market_segment
+    title: "Bei Check Market Segment"
+    sql: '{CUBE}.bei_check_market_segment'
+    type: string
+  - name: bei_cm_rm
+    title: "Bei Cm RM"
+    sql: '{CUBE}.bei_cm_rm'
+    type: number

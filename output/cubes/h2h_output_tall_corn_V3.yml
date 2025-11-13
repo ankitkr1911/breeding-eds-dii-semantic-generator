@@ -1,0 +1,240 @@
+cubes:
+- description: ""
+  name: h2h_output_tall_corn_V3
+  sql_table: 'bcs-brd-data-innovation-np.deployment.h2h_output_tall_corn_V3'
+  title: "H2h Output Tall Corn V3"
+
+  dimensions:
+  #----------joining keys--------------
+  - name: field_name
+    title: "Field Name"
+    sql: '{CUBE}.field_name'
+    type: string
+  - name: grow_year
+    title: "Grow Year"
+    sql: '{CUBE}.grow_year'
+    type: number
+  - name: head_product
+    title: "Head Product"
+    sql: '{CUBE}.head_product'
+    type: string
+  - name: head_set_name
+    title: "Head Set Name"
+    sql: '{CUBE}.head_set_name'
+    type: string
+  - name: head_pedigree
+    title: "Head Pedigree"
+    sql: '{CUBE}.head_pedigree'
+    type: string
+  - name: head_plot_id
+    title: "Head Plot ID"
+    sql: '{CUBE}.head_plot_id'
+    primaryKey: true
+    type: number
+  - name: head_market
+    title: "Head Market"
+    sql: '{CUBE}.head_market'
+    type: string
+  - name: head_set_rm
+    title: "Head Set RM"
+    sql: '{CUBE}.head_set_rm'
+    type: number
+  - name: head_gyld_be
+    title: "Head Gyld Be"
+    sql: '{CUBE}.head_gyld_be'
+    type: number
+  - name: head_gyld
+    title: "Head Gyld"
+    sql: '{CUBE}.head_gyld'
+    type: number
+  - name: head_mst_be
+    title: "Head Mst Be"
+    sql: '{CUBE}.head_mst_be'
+    type: number
+  - name: head_mst
+    title: "Head Mst"
+    sql: '{CUBE}.head_mst'
+    type: number
+  - name: head_twt_be
+    title: "Head Twt Be"
+    sql: '{CUBE}.head_twt_be'
+    type: number
+  - name: head_twt
+    title: "Head Twt"
+    sql: '{CUBE}.head_twt'
+    type: number
+  - name: head_rtlp
+    title: "Head Rtlp"
+    sql: '{CUBE}.head_rtlp'
+    type: number
+  - name: head_stlp
+    title: "Head Stlp"
+    sql: '{CUBE}.head_stlp'
+    type: number
+  - name: head_agspp_late
+    title: "Head Agspp Late"
+    sql: '{CUBE}.head_agspp_late'
+    type: number
+  - name: head_agspp_med
+    title: "Head Agspp Med"
+    sql: '{CUBE}.head_agspp_med'
+    type: number
+  - name: head_agspp_early
+    title: "Head Agspp Early"
+    sql: '{CUBE}.head_agspp_early'
+    type: number
+  - name: head_set_mean_gyld_be
+    title: "Head Set Mean Gyld Be"
+    sql: '{CUBE}.head_set_mean_gyld_be'
+    type: number
+  - name: head_set_mean_gyld
+    title: "Head Set Mean Gyld"
+    sql: '{CUBE}.head_set_mean_gyld'
+    type: number
+  - name: head_set_mean_mst_be
+    title: "Head Set Mean Mst Be"
+    sql: '{CUBE}.head_set_mean_mst_be'
+    type: number
+  - name: head_set_mean_mst
+    title: "Head Set Mean Mst"
+    sql: '{CUBE}.head_set_mean_mst'
+    type: string
+  - name: head_set_mean_twt_be
+    title: "Head Set Mean Twt Be"
+    sql: '{CUBE}.head_set_mean_twt_be'
+    type: number
+  - name: head_set_meam_twt
+    title: "Head Set Meam Twt"
+    sql: '{CUBE}.head_set_meam_twt'
+    type: number
+  - name: head_set_mean_rtlp
+    title: "Head Set Mean Rtlp"
+    sql: '{CUBE}.head_set_mean_rtlp'
+    type: number
+  - name: head_set_mean_stlp
+    title: "Head Set Mean Stlp"
+    sql: '{CUBE}.head_set_mean_stlp'
+    type: number
+  - name: head_set_mean_agspp_late
+    title: "Head Set Mean Agspp Late"
+    sql: '{CUBE}.head_set_mean_agspp_late'
+    type: string
+  - name: head_set_mean_agspp_med
+    title: "Head Set Mean Agspp Med"
+    sql: '{CUBE}.head_set_mean_agspp_med'
+    type: string
+  - name: head_set_mean_agspp_early
+    title: "Head Set Mean Agspp Early"
+    sql: '{CUBE}.head_set_mean_agspp_early'
+    type: string
+  - name: head_loc_mean_gyld_be
+    title: "Head Loc Mean Gyld Be"
+    sql: '{CUBE}.head_loc_mean_gyld_be'
+    type: number
+  - name: head_loc_mean_gyld
+    title: "Head Loc Mean Gyld"
+    sql: '{CUBE}.head_loc_mean_gyld'
+    type: number
+  - name: head_loc_mean_mst_be
+    title: "Head Loc Mean Mst Be"
+    sql: '{CUBE}.head_loc_mean_mst_be'
+    type: number
+  - name: head_loc_mean_mst
+    title: "Head Loc Mean Mst"
+    sql: '{CUBE}.head_loc_mean_mst'
+    type: string
+  - name: head_loc_mean_twt_be
+    title: "Head Loc Mean Twt Be"
+    sql: '{CUBE}.head_loc_mean_twt_be'
+    type: number
+  - name: head_loc_mean_twt
+    title: "Head Loc Mean Twt"
+    sql: '{CUBE}.head_loc_mean_twt'
+    type: number
+  - name: head_loc_mean_rtlp
+    title: "Head Loc Mean Rtlp"
+    sql: '{CUBE}.head_loc_mean_rtlp'
+    type: number
+  - name: head_loc_mean_stlp
+    title: "Head Loc Mean Stlp"
+    sql: '{CUBE}.head_loc_mean_stlp'
+    type: number
+  - name: head_loc_mean_agspp_late
+    title: "Head Loc Mean Agspp Late"
+    sql: '{CUBE}.head_loc_mean_agspp_late'
+    type: string
+  - name: head_loc_mean_agspp_med
+    title: "Head Loc Mean Agspp Med"
+    sql: '{CUBE}.head_loc_mean_agspp_med'
+    type: string
+  - name: head_loc_mean_agspp_early
+    title: "Head Loc Mean Agspp Early"
+    sql: '{CUBE}.head_loc_mean_agspp_early'
+    type: string
+  - name: check_gyld_be_avg
+    title: "Check Gyld Be Avg"
+    sql: '{CUBE}.check_gyld_be_avg'
+    type: number
+  - name: check_gyld_avg
+    title: "Check Gyld Avg"
+    sql: '{CUBE}.check_gyld_avg'
+    type: number
+  - name: check_mst_be_avg
+    title: "Check Mst Be Avg"
+    sql: '{CUBE}.check_mst_be_avg'
+    type: number
+  - name: check_mst_avg
+    title: "Check Mst Avg"
+    sql: '{CUBE}.check_mst_avg'
+    type: string
+  - name: check_twt_be_avg
+    title: "Check Twt Be Avg"
+    sql: '{CUBE}.check_twt_be_avg'
+    type: number
+  - name: check_twt_avg
+    title: "Check Twt Avg"
+    sql: '{CUBE}.check_twt_avg'
+    type: number
+  - name: check_rtlp_avg
+    title: "Check Rtlp Avg"
+    sql: '{CUBE}.check_rtlp_avg'
+    type: number
+  - name: check_stlp_avg
+    title: "Check Stlp Avg"
+    sql: '{CUBE}.check_stlp_avg'
+    type: number
+  - name: check_agspp_early_avg
+    title: "Check Agspp Early Avg"
+    sql: '{CUBE}.check_agspp_early_avg'
+    type: string
+  - name: check_agspp_med_avg
+    title: "Check Agspp Med Avg"
+    sql: '{CUBE}.check_agspp_med_avg'
+    type: string
+  - name: check_agspp_late_avg
+    title: "Check Agspp Late Avg"
+    sql: '{CUBE}.check_agspp_late_avg'
+    type: string
+  - name: overall_drought_stress_score
+    title: "Overall Drought Stress Score"
+    sql: '{CUBE}.overall_drought_stress_score'
+    type: number
+  - name: overall_heat_stress_score
+    title: "Overall Heat Stress Score"
+    sql: '{CUBE}.overall_heat_stress_score'
+    type: number
+  - name: early_season_cold_stress
+    title: "Early Season Cold Stress"
+    sql: '{CUBE}.early_season_cold_stress'
+    type: boolean
+  - name: combined_Stress
+    title: "Combined Stress"
+    sql: '{CUBE}.combined_Stress'
+    type: number
+
+  measures:
+  - name: count_distinct_head_plot_id
+    title: "Distinct count of Head Plot ID"
+    description: "This is to get Distinct count of Head Plot ID recorded."
+    sql: '{head_plot_id}'
+    type: count_distinct

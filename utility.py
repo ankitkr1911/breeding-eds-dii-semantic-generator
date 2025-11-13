@@ -55,7 +55,7 @@ def titleize_identifier(name: str) -> str:
     if not name:
         return ""
     parts = re.split(r"[_\s]+", name.strip())
-    acronyms = {"id", "api", "url", "ip", "uuid", "ssn", "dna", "rna", "ui", "db"}
+    acronyms = {"id", "api", "url", "ip", "uuid", "ssn", "dna", "rna", "ui", "db", "rm"}
     titled = []
     for p in parts:
         lp = p.lower()
@@ -64,6 +64,23 @@ def titleize_identifier(name: str) -> str:
         else:
             titled.append(lp[:1].upper() + lp[1:])
     return " ".join(titled)
+
+def parse_multi_cell(cell: Optional[str]) -> List[str]:
+    """
+    Parse multi-value cells which may contain newline-separated or comma-separated items,
+    optionally quoted. Returns a list of trimmed tokens.
+    """
+    s = clean_str(cell)
+    if not s:
+        return []
+    # Normalize newlines and commas
+    parts = []
+    for line in str(s).splitlines():
+        for token in re.split(r",", line):
+            tok = strip_outer_quotes(token).strip()
+            if tok:
+                parts.append(tok)
+    return parts
 
 # --------------------------
 # Log file creation
@@ -76,33 +93,41 @@ Timestamp: {TS}
 Processed cubes:
 {CUBE_LIST}
 
---- ## Generated YAMLs
+--- ## Generated Cube YAMLs
 
-{YAML_BLOCKS}
+{CUBE_YAML_BLOCKS}
+
+--- ## Generated View YAMLs
+
+{VIEW_YAML_BLOCKS}
 
 --- ## Notes
 - Primary key detected from Data Catalog tags or column descriptions; falls back to naming heuristics.
 - Default measure is count_distinct of the detected primary key.
-- Joins and Views can be added in the CSV and re-applied via --from-csv mode.
+- Views are generated only in --from-csv mode after you add join conditions in semantic_all.csv.
 """
 
-def create_new_log_multi(logs_dir: Path, yamls_by_cube: Dict[str, str], error_log_path: Optional[Path] = None) -> Path:
+def create_new_log_multi(logs_dir: Path, yamls_by_cube: Dict[str, str], yamls_by_view: Dict[str, str], error_log_path: Optional[Path] = None) -> Path:
     logs_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     log_filename = f"log_{timestamp}.md"
     log_path = logs_dir / log_filename
 
     cube_list = "\n".join([f"- {c}" for c in sorted(yamls_by_cube.keys())]) or "(none)"
-    yaml_blocks = []
+    cube_yaml_blocks = []
     for c, y in yamls_by_cube.items():
-        yaml_blocks.append(f"### {c}\n\n```yaml\n{y.strip()}\n```")
+        cube_yaml_blocks.append(f"### {c}\n\n```yaml\n{y.strip()}\n```")
+    view_yaml_blocks = []
+    for v, y in yamls_by_view.items():
+        view_yaml_blocks.append(f"### {v}\n\n```yaml\n{y.strip()}\n```")
     if error_log_path:
-        yaml_blocks.append(f"\n---\nErrors were captured in: {error_log_path}\n")
+        view_yaml_blocks.append(f"\n---\nErrors were captured in: {error_log_path}\n")
 
     content = DEFAULT_LOG_MD_TEMPLATE_MULTI.format(
         TS=timestamp,
         CUBE_LIST=cube_list,
-        YAML_BLOCKS="\n\n".join(yaml_blocks),
+        CUBE_YAML_BLOCKS="\n\n".join(cube_yaml_blocks) if cube_yaml_blocks else "(none)",
+        VIEW_YAML_BLOCKS="\n\n".join(view_yaml_blocks) if view_yaml_blocks else "(none)",
     )
     log_path.write_text(content, encoding="utf-8")
     return log_path
@@ -116,14 +141,14 @@ def create_error_log(logs_dir: Path, errors: List[Tuple[str, str]]) -> Optional[
     err_path = err_dir / f"errors_{timestamp}.log"
     lines = []
     for cube, err_text in errors:
-        lines.append(f"=== Cube: {cube} ===")
+        lines.append(f"=== Resource: {cube} ===")
         lines.append(err_text)
         lines.append("")
     err_path.write_text("\n".join(lines), encoding="utf-8")
     return err_path
 
 # --------------------------
-# Manual YAML text rendering
+# Manual YAML text rendering (cubes)
 # --------------------------
 
 def dq(s: str) -> str:
@@ -214,6 +239,43 @@ def render_yaml_text(cubes: List[Dict[str, object]]) -> str:
                         lines.append(f"{indent4}type: {tval}")
                     else:
                         lines.append(f"{indent4}type: {dq(tval)}")
+
+    return "\n".join(lines) + "\n"
+
+# --------------------------
+# View YAML rendering
+# --------------------------
+
+def render_view_yaml(view_obj: Dict[str, object]) -> str:
+    lines: List[str] = []
+    indent2 = "  "
+    indent4 = "    "
+    indent6 = "      "
+    indent8 = "        "
+    indent10 = "          "
+
+    lines.append("views:")
+    lines.append(f"{indent2}- name: {view_obj['name']}")
+    lines.append(f"{indent4}title: {dq(view_obj['title'])}")
+    lines.append(f"{indent4}description: {dq(view_obj['description'])}")
+
+    # cubes section
+    lines.append(f"{indent4}cubes:")
+    for jp in view_obj["cubes"]:
+        lines.append(f"{indent6}- join_path: {jp['join_path']}")
+        lines.append(f"{indent8}includes: ")
+        for inc in jp["includes"]:
+            lines.append(f"{indent10}- {inc}")
+
+    # folders section
+    if view_obj.get("folders"):
+        lines.append("")
+        lines.append(f"{indent4}folders : ")
+        for folder in view_obj["folders"]:
+            lines.append(f"{indent6}- name : {folder['name']}")
+            lines.append(f"{indent8}includes : ")
+            for inc in folder["includes"]:
+                lines.append(f"{indent10}- {inc}")
 
     return "\n".join(lines) + "\n"
 
@@ -352,7 +414,7 @@ def detect_primary_key_columns(table_id: str, schema: List[bigquery.SchemaField]
     return heuristics
 
 # --------------------------
-# CSV creation and YAML build
+# CSV creation and YAML build (cubes)
 # --------------------------
 
 def generate_rows_for_table(
@@ -392,6 +454,7 @@ def generate_rows_for_table(
             "cube_description": cube_desc_final,
             "cube_title": cube_title_auto,
             "cube_data_source": cube_data_source,
+            # view-related fields left empty; you will fill joins later
             "view_name": None,
             "view_title": None,
             "view_description": None,
@@ -403,13 +466,11 @@ def generate_rows_for_table(
             "join_relationship": None,
         })
 
-    # Default measure: distinct count of PK with descriptive text and dimension-style SQL reference
+    # Default measure: distinct count of PK, with descriptive text
     if pk:
         pk_title = titleize_identifier(pk)
         measure_title = f"Distinct count of {pk_title}"
-        # If dataset is present, mention it as "<dataset> application"
-        app_phrase = f" recorded in the {dataset} application" if dataset else ""
-        measure_desc = f"This is to get Distinct count of {pk_title}{app_phrase}"
+        measure_desc = f"This is to get Distinct count of {pk_title} recorded."
         rows.append({
             "dimension_name": f"count_distinct_{pk}",
             "dimension_measure_flag": "measure",
@@ -478,30 +539,50 @@ def build_cubes_from_semantic_csv(csv_path: Path, only_cubes: Optional[Set[str]]
         cube["dimensions"] = []
         cube["measures"] = []
 
-        # Joins
+        # Joins (if CSV has filled ones) - handle only first row per cube if that's where you put them
         join_cols = ["join_primary_table", "join_secondary_table", "join_sql", "join_relationship"]
         if all(col in gdf.columns for col in join_cols):
-            jdf = gdf.copy()
-            jdf["join_secondary_table"] = jdf["join_secondary_table"].apply(clean_str)
-            jdf["join_sql"] = jdf["join_sql"].apply(clean_str)
-            jdf["join_relationship"] = jdf["join_relationship"].apply(clean_str)
-            jdf = jdf.dropna(subset=["join_secondary_table", "join_sql"], how="all")
-            seen = set()
-            for _, jr in jdf.iterrows():
-                sec = jr.get("join_secondary_table")
-                sql = jr.get("join_sql")
-                rel = jr.get("join_relationship")
-                key = (sec or "", sql or "", rel or "")
-                if not any([sec, sql, rel]):
-                    continue
-                if key in seen:
-                    continue
-                seen.add(key)
-                j = {}
-                if sec: j["name"] = sec
-                if rel: j["relationship"] = rel
-                if sql: j["sql"] = sql
-                cube["joins"].append(j)
+            # Use the first non-empty row for joins
+            jrow = None
+            for _, jr in gdf.iterrows():
+                if clean_str(jr.get("join_secondary_table")) or clean_str(jr.get("join_sql")):
+                    jrow = jr
+                    break
+            if jrow is not None:
+                prim = clean_str(jrow.get("join_primary_table")) or cube_name
+                secondaries = parse_multi_cell(jrow.get("join_secondary_table"))
+                sqls = parse_multi_cell(jrow.get("join_sql"))
+                relationships = parse_multi_cell(jrow.get("join_relationship"))
+                # Align lists by index; pad relationships if needed
+                max_len = max(len(secondaries), len(sqls))
+                if max_len == 0 and (clean_str(jrow.get("join_secondary_table")) or clean_str(jrow.get("join_sql"))):
+                    # Single values without separators
+                    sec = clean_str(jrow.get("join_secondary_table"))
+                    sq = clean_str(jrow.get("join_sql"))
+                    rel = clean_str(jrow.get("join_relationship"))
+                    if sec or sq or rel:
+                        j = {}
+                        if sec: j["name"] = sec
+                        if rel: j["relationship"] = rel
+                        if sq: j["sql"] = sq
+                        cube["joins"].append(j)
+                else:
+                    if len(secondaries) < max_len:
+                        secondaries += [""] * (max_len - len(secondaries))
+                    if len(sqls) < max_len:
+                        sqls += [""] * (max_len - len(sqls))
+                    if len(relationships) < max_len and relationships:
+                        relationships += [relationships[-1]] * (max_len - len(relationships))
+                    for i in range(max_len):
+                        sec = clean_str(secondaries[i]) if i < len(secondaries) else None
+                        sq = clean_str(sqls[i]) if i < len(sqls) else None
+                        rel = clean_str(relationships[i]) if i < len(relationships) and relationships else None
+                        if sec or sq or rel:
+                            j = {}
+                            if sec: j["name"] = sec
+                            if rel: j["relationship"] = rel
+                            if sq: j["sql"] = sq
+                            cube["joins"].append(j)
 
         # Dimensions and measures
         for _, r in gdf.iterrows():
@@ -535,17 +616,138 @@ def build_cubes_from_semantic_csv(csv_path: Path, only_cubes: Optional[Set[str]]
 
     return cubes
 
-def write_yaml_per_cube(cubes: List[Dict[str, object]], output_dir: Path) -> Dict[str, str]:
+def write_yaml_per_cube(cubes: List[Dict[str, object]], cubes_dir: Path) -> Dict[str, str]:
     yamls_by_cube: Dict[str, str] = {}
-    output_dir.mkdir(parents=True, exist_ok=True)
+    cubes_dir.mkdir(parents=True, exist_ok=True)
     for cube in cubes:
         name = cube.get("name")
         yaml_text = render_yaml_text([cube])
         yamls_by_cube[name] = yaml_text
-        out_path = output_dir / f"{name}.yml"
+        out_path = cubes_dir / f"{name}.yml"
         out_path.write_text(yaml_text, encoding="utf-8")
-        print(f"Wrote YAML to: {out_path}")
+        print(f"Wrote Cube YAML to: {out_path}")
     return yamls_by_cube
+
+# --------------------------
+# View building (from CSV joins + cube metadata)
+# --------------------------
+
+def resolve_root_cube(requested: Optional[str], cube_by_name: Dict[str, Dict[str, object]], edges: Dict[str, Set[str]]) -> Optional[str]:
+    """
+    Resolve the root cube robustly:
+    - If requested exists, use it.
+    - Try common variations (add/remove 'dim_' prefix).
+    - If still missing, pick the node with max out-degree from edges that exists in cube_by_name.
+    - Else fallback to 'product' or 'dim_product' if present.
+    - Else pick the first cube alphabetically.
+    """
+    if requested and requested in cube_by_name:
+        return requested
+    if requested:
+        # Try adding 'dim_' prefix
+        if ("dim_" + requested) in cube_by_name:
+            return "dim_" + requested
+        # Try matching after stripping 'dim_'
+        for name in cube_by_name.keys():
+            if name.startswith("dim_") and name[len("dim_"):] == requested:
+                return name
+    # Prefer max out-degree from edges
+    candidates = [n for n in edges.keys() if n in cube_by_name]
+    if candidates:
+        best = max(candidates, key=lambda n: len(edges.get(n, set())))
+        return best
+    # Prefer product/dim_product
+    if "product" in cube_by_name:
+        return "product"
+    if "dim_product" in cube_by_name:
+        return "dim_product"
+    # Fallback
+    return sorted(cube_by_name.keys())[0] if cube_by_name else None
+
+def build_view_from_csv_and_cubes(
+    csv_path: Path,
+    cubes: List[Dict[str, object]],
+    view_name: str,
+    root_cube: Optional[str] = None,
+    view_description: Optional[str] = None
+) -> Dict[str, object]:
+    df = pd.read_csv(csv_path)
+    df = df.dropna(how="all")
+
+    # Build adjacency from CSV join rows (support multiline join values in first row per cube)
+    edges: Dict[str, Set[str]] = {}
+    for cube_name, gdf in df.groupby("cube_name", dropna=True):
+        # Take the first row with any join data
+        jrow = None
+        for _, jr in gdf.iterrows():
+            if clean_str(jr.get("join_secondary_table")) or clean_str(jr.get("join_sql")):
+                jrow = jr
+                break
+        if jrow is None:
+            continue
+        primary = clean_str(jrow.get("join_primary_table")) or cube_name
+        secondaries = parse_multi_cell(jrow.get("join_secondary_table"))
+        if secondaries:
+            edges.setdefault(primary, set()).update(secondaries)
+
+    cube_by_name: Dict[str, Dict[str, object]] = {c["name"]: c for c in cubes if c.get("name")}
+
+    # Auto-resolve root cube
+    resolved_root = resolve_root_cube(root_cube, cube_by_name, edges)
+    if not resolved_root or resolved_root not in cube_by_name:
+        raise ValueError("Root cube not found for view generation.")
+
+    # Helper: collect fields to include
+    def fields_for_cube(c: Dict[str, object]) -> List[str]:
+        inc: List[str] = []
+        for d in c.get("dimensions", []):
+            if d.get("name"):
+                inc.append(d["name"])
+        for m in c.get("measures", []):
+            if m.get("name"):
+                inc.append(m["name"])
+        return inc
+
+    # Build join_paths via DFS
+    join_paths: List[Dict[str, object]] = []
+    visited_paths: Set[Tuple[str, ...]] = set()
+
+    # Root entry
+    join_paths.append({"join_path": resolved_root, "includes": fields_for_cube(cube_by_name[resolved_root])})
+    visited_paths.add((resolved_root,))
+
+    def dfs(current: str, path: List[str]):
+        neighbors = sorted([n for n in edges.get(current, set()) if n in cube_by_name])
+        for n in neighbors:
+            new_path = path + [n]
+            tpl = tuple(new_path)
+            if tpl in visited_paths:
+                continue
+            visited_paths.add(tpl)
+            jp = ".".join(new_path)
+            includes = fields_for_cube(cube_by_name[n])
+            join_paths.append({"join_path": jp, "includes": includes})
+            dfs(n, new_path)
+
+    dfs(resolved_root, [resolved_root])
+
+    # Folders: group by cube (generic)
+    folders: List[Dict[str, object]] = []
+    for c in cubes:
+        folders.append({"name": titleize_identifier(c["name"]), "includes": fields_for_cube(c)})
+
+    title = titleize_identifier(view_name)
+    desc = view_description or f"Auto-generated view based on CSV joins and cubes. Root cube: {resolved_root}"
+
+    return {"name": view_name, "title": title, "description": desc, "cubes": join_paths, "folders": folders}
+
+def write_view_yaml(view_obj: Dict[str, object], views_dir: Path) -> Dict[str, str]:
+    views_dir.mkdir(parents=True, exist_ok=True)
+    yaml_text = render_view_yaml(view_obj)
+    out_path = views_dir / f"{view_obj['name']}.yml"
+    out_path.write_text(yaml_text, encoding="utf-8")
+    print(f"Wrote View YAML to: {out_path}")
+    return {view_obj["name"]: yaml_text}
 
 # ---------------
 # Command-line app
@@ -553,14 +755,16 @@ def write_yaml_per_cube(cubes: List[Dict[str, object]], output_dir: Path) -> Dic
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate/append semantic CSV and parallel YAMLs from one or more BigQuery tables, or rebuild YAMLs from an existing semantic CSV."
+        description="Generate/append semantic CSV and Cube YAMLs from one or more BigQuery tables, or build a View YAML from an edited semantic CSV."
     )
     # Multiple tables: pass --bq-table multiple times or use --bq-tables comma-separated
     parser.add_argument("--bq-table", action="append", help="BigQuery table in project.dataset.table form. Can be passed multiple times.")
     parser.add_argument("--bq-tables", help="Comma-separated BigQuery tables in project.dataset.table form.")
-    parser.add_argument("--from-csv", help="Path to an existing semantic CSV file to build YAMLs for all cubes found")
+    parser.add_argument("--from-csv", help="Path to the edited semantic CSV file to build a View YAML")
     parser.add_argument("-i", "--input-dir", default="./input", help="Folder where the semantic CSV will be written/updated")
-    parser.add_argument("--output-dir", default="./output", help="Folder where YAML files will be written")
+    parser.add_argument("--output-dir", default="./output", help="Folder where YAML files will be written (cubes/ and views/ subfolders)")
+    parser.add_argument("--view-name", default="deployments", help="Name of the view YAML to generate (only in --from-csv mode)")
+    parser.add_argument("--view-root-cube", help="Root cube name for nested join_paths in the view (only in --from-csv mode)")
     parser.add_argument("--cube-title", help="Optional cube title override (applies to all cubes in this run; otherwise auto-title from cube_name)")
     parser.add_argument("--cube-description", help="Optional cube description to store in CSV/YAML (applies to all cubes in this run)")
     parser.add_argument("--verbose", action="store_true", help="Print details")
@@ -568,8 +772,10 @@ def main():
 
     input_dir = Path(args.input_dir)
     output_dir = Path(args.output_dir)
+    cubes_dir = output_dir / "cubes"
+    views_dir = output_dir / "views"
 
-    # Determine logs directory at the same level as 'input' and 'output' folders
+    # Determine logs directory at the same level as 'output' folder
     if output_dir.name.lower() == "output":
         logs_dir = output_dir.parent / "logs"
     else:
@@ -585,20 +791,30 @@ def main():
             if t:
                 tables.append(t)
 
-    # Mode: from existing CSV (rebuild YAMLs for all cubes in CSV)
+    # Mode: Build View from edited CSV (no BigQuery calls here)
     if args.from_csv and not tables:
         csv_path = Path(args.from_csv)
         if not csv_path.exists():
             print(f"Error: CSV file not found: {csv_path}", file=sys.stderr)
             sys.exit(1)
+        # Rebuild cubes from CSV (for field lists in includes)
         cubes = build_cubes_from_semantic_csv(csv_path, only_cubes=None)
-        yamls_by_cube = write_yaml_per_cube(cubes, output_dir)
-        err_log_path = None
-        log_path = create_new_log_multi(logs_dir, yamls_by_cube, err_log_path)
-        print(f"Created log file: {log_path}")
+        yamls_by_cube: Dict[str, str] = {}  # no cube YAML writes in this mode
+        # Build and write view
+        try:
+            view_obj = build_view_from_csv_and_cubes(csv_path, cubes, args.view_name, root_cube=args.view_root_cube, view_description=None)
+            yamls_by_view = write_view_yaml(view_obj, views_dir)
+            err_log_path = None
+            log_path = create_new_log_multi(logs_dir, yamls_by_cube, yamls_by_view, err_log_path)
+            print(f"Created log file: {log_path}")
+        except Exception as e:
+            err_text = f"Exception while building view from CSV '{csv_path}': {e}\n{traceback.format_exc()}"
+            err_log_path = create_error_log(logs_dir, [(args.view_name, err_text)])
+            print(err_text, file=sys.stderr)
+            print(f"Errors captured in: {err_log_path}")
         return
 
-    # Mode: BigQuery -> append/update CSV + write YAMLs for provided tables
+    # Mode: BigQuery -> append/update CSV + write Cube YAMLs for provided tables (no View generation now)
     if not tables:
         print("Error: Provide either --from-csv or one/more tables via --bq-table/--bq-tables", file=sys.stderr)
         sys.exit(1)
@@ -629,10 +845,12 @@ def main():
 
     only_set = set(processed_cubes) if processed_cubes else None
     cubes = build_cubes_from_semantic_csv(combined_csv_path, only_cubes=only_set)
-    yamls_by_cube = write_yaml_per_cube(cubes, output_dir)
+    yamls_by_cube = write_yaml_per_cube(cubes, cubes_dir)
+
+    # No view generation here; you will edit semantic_all.csv to add joins and then run --from-csv to build the view.
 
     err_log_path = create_error_log(logs_dir, errors)
-    log_path = create_new_log_multi(logs_dir, yamls_by_cube, err_log_path)
+    log_path = create_new_log_multi(logs_dir, yamls_by_cube, {}, err_log_path)
     print(f"Created log file: {log_path}")
     if err_log_path:
         print(f"Errors captured in: {err_log_path}")

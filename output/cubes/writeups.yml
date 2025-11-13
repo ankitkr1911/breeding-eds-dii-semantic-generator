@@ -1,0 +1,160 @@
+cubes:
+- description: ""
+  name: writeups
+  sql_table: 'bcs-brd-data-innovation-np.deployment.writeups'
+  title: "Writeups"
+
+  dimensions:
+  #----------joining keys--------------
+  - name: decision
+    title: "Decision"
+    sql: '{CUBE}.decision'
+    type: string
+  - name: plant_height
+    title: "Plant Height"
+    sql: '{CUBE}.plant_height'
+    type: string
+  - name: test_weight
+    title: "Test Weight"
+    sql: '{CUBE}.test_weight'
+    type: number
+  - name: drydown
+    title: "Drydown"
+    sql: '{CUBE}.drydown'
+    type: number
+  - name: staygreen
+    title: "Staygreen"
+    sql: '{CUBE}.staygreen'
+    type: number
+  - name: stalk_strength
+    title: "Stalk Strength"
+    sql: '{CUBE}.stalk_strength'
+    type: number
+  - name: root_strength
+    title: "Root Strength"
+    sql: '{CUBE}.root_strength'
+    type: number
+  - name: seedling_growth
+    title: "Seedling Growth"
+    sql: '{CUBE}.seedling_growth'
+    type: number
+  - name: gsp
+    title: "Gsp"
+    sql: '{CUBE}.gsp'
+    type: number
+  - name: emergence
+    title: "Emergence"
+    sql: '{CUBE}.emergence'
+    type: number
+  - name: speciality_market
+    title: "Speciality Market"
+    sql: '{CUBE}.speciality_market'
+    type: string
+  - name: harvest_appearence
+    title: "Harvest Appearence"
+    sql: '{CUBE}.harvest_appearence'
+    type: number
+  - name: rhs_potential
+    title: "Rhs Potential"
+    sql: '{CUBE}.rhs_potential'
+    type: string
+  - name: key_strength
+    title: "Key Strength"
+    sql: '{CUBE}.key_strength'
+    type: string
+  - name: cm_rm
+    title: "Cm RM"
+    sql: '{CUBE}.cm_rm'
+    type: number
+  - name: parental_characteristic
+    title: "Parental Characteristic"
+    sql: '{CUBE}.parental_characteristic'
+    type: string
+  - name: silage
+    title: "Silage"
+    sql: '{CUBE}.silage'
+    type: string
+  - name: ear_placement
+    title: "Ear Placement"
+    sql: '{CUBE}.ear_placement'
+    type: string
+  - name: entry_type
+    title: "Entry Type"
+    sql: '{CUBE}.entry_type'
+    type: string
+  - name: other_phenotypic_observations
+    title: "Other Phenotypic Observations"
+    sql: '{CUBE}.other_phenotypic_observations'
+    type: string
+  - name: trait_group
+    title: "Trait Group"
+    sql: '{CUBE}.trait_group'
+    type: string
+  - name: pedigree
+    title: "Pedigree"
+    sql: '{CUBE}.pedigree'
+    type: string
+  - name: release_geography
+    title: "Release Geography"
+    sql: '{CUBE}.release_geography'
+    type: string
+  - name: test_set_name
+    title: "Test Set Name"
+    sql: '{CUBE}.test_set_name'
+    type: string
+  - name: pds_assignment
+    title: "Pds Assignment"
+    sql: '{CUBE}.pds_assignment'
+    type: string
+  - name: weakness
+    title: "Weakness"
+    sql: '{CUBE}.weakness'
+    type: string
+  - name: ps4_writeup_template
+    title: "Ps4 Writeup Template"
+    sql: '{CUBE}.ps4_writeup_template'
+    type: string
+  - name: planting_rate
+    title: "Planting Rate"
+    sql: '{CUBE}.planting_rate'
+    type: string
+  - name: trait_description
+    title: "Trait Description"
+    sql: '{CUBE}.trait_description'
+    type: string
+  - name: hybrid_rm
+    title: "Hybrid RM"
+    sql: '{CUBE}.hybrid_rm'
+    type: string
+  - name: trait_package
+    title: "Trait Package"
+    sql: '{CUBE}.trait_package'
+    type: string
+  - name: management_recommendations
+    title: "Management Recommendations"
+    sql: '{CUBE}.management_recommendations'
+    type: string
+  - name: market
+    title: "Market"
+    sql: '{CUBE}.market'
+    type: string
+  - name: description
+    title: "Description"
+    sql: '{CUBE}.description'
+    type: string
+  - name: sub_market
+    title: "Sub Market"
+    sql: '{CUBE}.sub_market'
+    type: string
+  - name: product_name_cs
+    title: "Product Name Cs"
+    sql: '{CUBE}.product_name_cs'
+    type: string
+  - name: precomm
+    title: "Precomm"
+    sql: '{CUBE}.precomm'
+    type: string
+  - name: cs_int
+    title: "Cs Int"
+    sql: '{CUBE}.cs_int'
+    type: string
