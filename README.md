@@ -1,215 +1,185 @@
-# BigQuery → Semantic CSV/YAML Utility
+# BigQuery → Semantic CSV, Cube YAMLs, and View YAML Generator
 
-A Python CLI to generate and maintain semantic modeling artifacts from Google BigQuery tables:
-- Auto-build a CSV skeleton with dimensions and a default measure.
-- Render YAML files (one per table/cube) in a consistent format.
-- Support multiple tables per run, idempotent upsert into a single CSV.
-- Append a run log and capture errors separately for traceability.
+## Overview
+This utility converts one or more Google BigQuery tables into:
+- a consolidated semantic CSV (semantic_all.csv)
+- individual Cube YAML files (one per table) under output/cubes
+- an optional View YAML (e.g., deployments.yml) under output/views, built from the CSV’s join definitions
 
-## Features
+It supports iterative modeling:
+1. Generate CSV + cube YAMLs from BigQuery schemas.
+2. Manually enrich the CSV (add join paths, visibility, folders, etc.).
+3. Build a view YAML using the enriched CSV.
 
-- Automatic CSV generation for one or more BigQuery tables:
-  - One row per column as a dimension.
-  - Auto-derived dimension_title from column name (e.g., capacity_request_id → “Capacity Request ID”).
-  - Auto-derived cube_title from cube name (e.g., capacity_request → “Capacity Request”).
-  - cube_data_source set to the second dash-separated part of the project ID (e.g., bcs-breeding-datasets → “breeding”).
-- Default measure (if PK detected):
-  - name: count_distinct_<pk>
-  - title: “Distinct count of <PK Title>”
-  - description: “This is to get Distinct count of <PK Title> recorded in the <dataset> application”
-  - sql: '{<pk>}'
-  - type: count_distinct
-- YAML generation per cube, in parallel:
-  - Output files named <cube>.yml (e.g., capacity_request.yml).
-- CSV edit-and-rebuild mode:
-  - Edit the generated CSV; rebuild YAMLs from it.
-- Logging and error handling:
-  - Markdown run log embedding all YAMLs for the run.
-  - Separate error log with stack traces.
+Runs produce timestamped logs and separate error logs for traceability.
+
+## Key Features
+- Multiple table input in one command (append/update into a single CSV).
+- Automatic dimension titles from column names (snake_case → Title Case).
+- Automatic cube titles from cube names (snake_case → Title Case).
+- Auto-detected primary key (Data Catalog tags → column descriptions → naming heuristics).
+- Default measure: distinct count of the detected PK with generated title and description.
+- Parallel Cube YAML generation (one YAML per cube).
+- View generation driven by CSV after you add join definitions (first row per cube).
+- Robust handling of multi-value joins (comma-separated or newline-separated lists).
+- Detailed logs:
+  - output/logs/log_YYYYMMDD_HHMMSS.md
+  - output/logs/errors/errors_YYYYMMDD_HHMMSS.log
 
 ## Project Structure
-
-```
-.
-├─ input/
-│  └─ semantic_all.csv          # Combined CSV; upserted per run
-├─ output/
-│  ├─ capacity_request.yml      # YAML per cube (table)
-│  ├─ <other_cube>.yml
-│  └─ logs/
-│     ├─ log_YYYYMMDD_HHMMSS.md
-│     └─ errors/
-│        └─ errors_YYYYMMDD_HHMMSS.log
-└─ utility.py                    # CLI entry point
-```
+- input/
+  - semantic_all.csv (consolidated semantic schema)
+- output/
+  - cubes/
+    - <cube_name>.yml
+  - views/
+    - <view_name>.yml
+- logs/
+  - log_YYYYMMDD_HHMMSS.md
+  - errors/errors_YYYYMMDD_HHMMSS.log
 
 ## Prerequisites
-
-- Python 3.9+ (tested on Python 3.10)
-- Packages:
-  - pandas
-  - google-cloud-bigquery
-  - google-cloud-datacatalog (optional; used for PK detection via tags)
-
-Install packages:
+- Python 3.9+ recommended
+- Install packages:
 ```bash
-pip install pandas google-cloud-bigquery google-cloud-datacatalog
+pip install google-cloud-bigquery pandas
+```
+- Optional (for stronger PK detection via tags):
+```bash
+pip install google-cloud-datacatalog
 ```
 
-### Authenticate to Google Cloud
-
-BigQuery client needs credentials (ADC).
-
-Option A: Cloud SDK (user credentials)
-- Install SDK (Windows):
-  - via winget: winget install -e --id Google.CloudSDK
-  - or via installer: https://cloud.google.com/sdk/docs/install
-- Then:
-```bash
-gcloud auth application-default login
-gcloud config set project <project-id>
+## Authentication (Windows)
+- CMD (current session):
+```cmd
+set GOOGLE_APPLICATION_CREDENTIALS=C:\path\to\service-account.json
+```
+- PowerShell (current session):
+```powershell
+$env:GOOGLE_APPLICATION_CREDENTIALS="C:\path\to\service-account.json"
 ```
 
-Option B: Service Account key (no SDK needed)
-- Create a service account with roles:
-  - BigQuery Data Viewer (required)
-  - Data Catalog Viewer (optional; for PK detection via tags)
-- Download JSON key and set env var:
-  - CMD (current session): set GOOGLE_APPLICATION_CREDENTIALS=C:\path\to\key.json
-  - PowerShell: $env:GOOGLE_APPLICATION_CREDENTIALS="C:\path\to\key.json"
+The service account should have:
+- BigQuery Data Viewer (to read table schemas)
+- Data Catalog Viewer (optional, for PK detection via tags)
 
 ## Usage
 
-### Generate from a single BigQuery table
-
-- Appends/updates input/semantic_all.csv
-- Writes YAML to output/<cube>.yml
-- Creates run log and error log (if any)
-
+### 1) Generate CSV + Cube YAMLs from BigQuery (no view yet)
+- Multiple tables (comma-separated):
 ```bash
-python utility.py --bq-table bcs-breeding-datasets.velocity.capacity_request -i ./input --output-dir ./output --verbose
+python utility.py --bq-tables project.dataset.table1,project.dataset.table2,project.dataset.table3 -i ./input --output-dir ./output --verbose
+```
+- Multiple tables (repeat flag):
+```bash
+python utility.py --bq-table project.dataset.table1 --bq-table project.dataset.table2 --bq-table project.dataset.table3 -i ./input --output-dir ./output --verbose
 ```
 
-### Generate from multiple tables
+Outputs:
+- input/semantic_all.csv: appended/updated rows for each cube
+- output/cubes/<cube_name>.yml: one YAML per cube
+- logs/log_YYYYMMDD_HHMMSS.md (+ errors if any)
 
-Pass multiple flags:
-```bash
-python utility.py --bq-table proj.ds.table1 --bq-table proj.ds.table2 -i ./input --output-dir ./output --verbose
+### 2) Edit the CSV to add joins for view generation
+Open input/semantic_all.csv and, for the first row of each cube, fill:
+- join_primary_table: root cube name for that join row (often your main cube)
+- join_secondary_table: list of related cubes (comma-separated or newline-separated)
+- join_sql: list of corresponding join expressions (comma-separated or newline-separated)
+- join_relationship: e.g., one_to_many or one_to_one
+- Optionally set view_name, view_title, view_description, visible_in_view, view_folder_name
+
+Example (first row for dim_product):
+```text
+cube_name,cube_sql_table,cube_description,cube_title,cube_data_source,view_name,view_title,view_description,visible_in_view,view_folder_name,join_primary_table,join_secondary_table,join_sql,join_relationship
+dim_product,bcs-brd-data-innovation-np.dimensions.dim_product,Complete list of all the Head products,Dim Product,brd,,,,"",,dim_product,"dim_density
+bei
+h2h_tall_corn
+hblup_h2h
+writeups","{CUBE.key} = {dim_density.key}
+{CUBE.key} = {bei.bei_product_key}
+{CUBE.key} = {h2h_tall_corn.product_key}
+{CUBE.key} = {hblup_h2h.agspp_product_key}
+{CUBE.key} = {writeups.key}",one_to_many
 ```
-
-Or comma-separated:
-```bash
-python utility.py --bq-tables proj.ds.table1,proj.ds.table2 -i ./input --output-dir ./output --verbose
-```
-
-### Rebuild YAMLs from edited CSV
-
-After editing input/semantic_all.csv (e.g., adding descriptions, joins):
-```bash
-python utility.py --from-csv ./input/semantic_all.csv --output-dir ./output --verbose
-```
-
-## CSV Schema (columns)
-
-- dimension_name
-- dimension_measure_flag (“dimension” | “measure”)
-- dimension_title
-- dimension_description
-- dimension_sql
-- primary_key (“TRUE” for PK dimension)
-- dimension_type (e.g., string, number, time; for measure: count_distinct)
-- cube_name
-- cube_sql_table (project.dataset.table)
-- cube_description
-- cube_title
-- cube_data_source
-- view_name, view_title, view_description, visible_in_view, view_folder_name
-- join_primary_table, join_secondary_table, join_sql, join_relationship
-
 Notes:
-- dimension_title is auto derived from dimension_name.
-- cube_title is auto derived from cube_name.
-- cube_data_source is derived from the project ID (second dash-separated token).
+- The utility supports multiple values in “join_secondary_table” and “join_sql” as either newline-separated or comma-separated lists.
+- “join_relationship” can be a single value; it will be reused for all listed joins if you don’t provide one per line.
 
-## YAML Structure
-
-Each cube renders as:
-```yaml
-cubes:
-- description: "..."
-  name: capacity_request
-  sql_table: 'bcs-breeding-datasets.velocity.capacity_request'
-  title: "Capacity Request"
-
-  joins:
-  # Optional; only if present in CSV (manually added)
-  - name: experiment_sets_entries
-    relationship: one_to_many
-    sql: '{CUBE.capacity_request_id} = {experiment_sets_entries.capacity_request_id}'
-
-  dimensions:
-  #----------joining keys--------------
-  - name: capacity_request_id
-    title: "Capacity Request ID"
-    description: "..."
-    sql: '{CUBE}.capacity_request_id'
-    primaryKey: true
-    type: number
-
-  measures:
-  - name: count_distinct_capacity_request_id
-    title: "Distinct count of Capacity Request ID"
-    description: "This is to get Distinct count of Capacity Request ID recorded in the velocity application"
-    sql: '{capacity_request_id}'
-    type: count_distinct
+### 3) Build the View YAML from the edited CSV
+```bash
+python utility.py --from-csv ./input/semantic_all.csv --output-dir ./output --view-name deployments --view-root-cube product --verbose
 ```
 
-Filenames:
-- output/<cube>.yml (e.g., output/capacity_request.yml)
+Outputs:
+- output/views/deployments.yml
+- logs/log_YYYYMMDD_HHMMSS.md (+ errors if any)
 
-## Primary Key Detection
+If you omit --view-root-cube, the utility auto-resolves the root by:
+- Using your requested root if it exists
+- Trying “dim_” prefixed variants
+- Selecting the cube with the highest number of outgoing joins from the CSV
+- Falling back to product/dim_product or the first cube alphabetically
 
-BigQuery does not enforce PKs. The utility infers PK using:
-1. Data Catalog tags (if available):
-   - Tag fields named primary_key, is_pk, or pk with true-ish values, attached to columns.
-2. BigQuery column descriptions:
-   - Contains “primary key” or “pk”.
-3. Naming heuristics:
-   - <table>_id → any column ending with _id → id.
+## What gets auto-generated
 
-If a PK is detected, the default measure is added. If not, no default measure is created; you can set the primary_key flag in CSV manually and rebuild YAML.
+### Dimensions
+- Name = BigQuery column name
+- Title = Titleized form of the column name (snake_case → Title Case)
+- SQL = {CUBE}.<column>
+- Type = Mapped from BigQuery type (STRING→string, INT64/FLOAT64/NUMERIC→number, BOOL→boolean, TIMESTAMP/DATE/DATETIME/TIME→time)
 
-## Logging
+### Primary Key Detection
+The utility infers PK via:
+1. Data Catalog tags (primary_key / is_pk / pk true at column level)
+2. Column description containing “primary key” or “pk”
+3. Naming heuristics: <table>_id → first column ending with _id → id
 
-- Run log (Markdown) embedding YAML outputs:
-  - output/logs/log_YYYYMMDD_HHMMSS.md
-- Error log:
-  - output/logs/errors/errors_YYYYMMDD_HHMMSS.log
+### Default Measure
+For the detected PK, adds:
+- name: count_distinct_<pk>
+- title: “Distinct count of <Titleized PK>”
+- description: “This is to get Distinct count of <Titleized PK> recorded.”
+- sql: “{<pk>}” (dimension reference style)
+- type: count_distinct
+
+Example:
+```yaml
+measures:
+- name: count_distinct_capacity_request_id
+  title: "Distinct count of Capacity Request ID"
+  description: "This is to get Distinct count of Capacity Request ID recorded."
+  sql: '{capacity_request_id}'
+  type: count_distinct
+```
+
+## YAML Output Conventions
+- Cube YAML file per cube: output/cubes/<cube_name>.yml
+- View YAML built only in --from-csv mode: output/views/<view_name>.yml
+- Strings in YAML are consistently quoted; SQL-like fields use single quotes.
+
+## Example: Six-Table Run (Corn Deployments)
+Generate CSV + cube YAMLs:
+```bash
+python utility.py --bq-tables bcs-brd-data-innovation-np.dimensions.dim_product,bcs-brd-data-innovation-np.dimensions.dim_density,bcs-brd-data-innovation-np.dimensions.dim_bei,bcs-brd-data-innovation-np.deployment.h2h_output_tall_corn_V3,bcs-brd-data-innovation-np.deployment.hblup_h2h,bcs-brd-data-innovation-np.deployment.writeups -i ./input --output-dir ./output --verbose
+```
+Edit input/semantic_all.csv to add joins (first row for each cube), then build the view:
+```bash
+python utility.py --from-csv ./input/semantic_all.csv --output-dir ./output --view-name deployments --view-root-cube product --verbose
+```
 
 ## Troubleshooting
+- Authentication error (DefaultCredentialsError):
+  - Ensure GOOGLE_APPLICATION_CREDENTIALS is set to a valid service account JSON with BigQuery permissions.
+- “Root cube not found for view generation.”
+  - The utility now auto-resolves the root cube. If needed, pass --view-root-cube explicitly (e.g., product or dim_product).
+- Missing cube joins in the view:
+  - Confirm you added join_secondary_table and join_sql for the cube’s first row. Use newline-separated or comma-separated lists.
+- Missing YAML files:
+  - Cube YAMLs are only generated in BigQuery mode; view YAML is only generated in --from-csv mode.
 
-- SyntaxError at line 1:
-  - Cause: Code fences (```python) pasted into utility.py.
-  - Fix: Remove backticks; utility.py must be pure Python.
+## Notes
+- You can re-run BigQuery mode to append/update the CSV and cube YAMLs as schemas evolve.
+- You can re-run view mode whenever you refine joins in the CSV.
+- Error logs are written to output/logs/errors/ with full stack traces to aid debugging.
 
-- Default credentials not found:
-  - Cause: ADC not set.
-  - Fix: Use Cloud SDK (gcloud auth application-default login) or set GOOGLE_APPLICATION_CREDENTIALS to a service account JSON key.
-
-- “unrecognized arguments: -o …”:
-  - Cause: Updated CLI uses --output-dir, not -o.
-  - Fix: Use --output-dir ./output.
-
-- Duplicate rows in CSV:
-  - Handled by upsert: the utility removes existing rows for a cube and writes fresh ones.
-
-## Development Notes
-
-- Rendering is manual to match the existing YAML style and quoting:
-  - Double quotes for display strings; single quotes for SQL-like fragments.
-- Data Catalog dependency is optional and handled gracefully; if unavailable, the utility falls back to descriptions and heuristics.
-- The utility supports both generation from BigQuery and rebuild from CSV to accommodate manual edits.
-
-## License
-
-Internal utility for semantic modeling. Adjust, extend, or integrate as needed within your environment.
+Happy modeling!
