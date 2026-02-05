@@ -1,9 +1,0 @@
-=== Resource: deployments ===
-Exception while building view from CSV 'input\semantic_all.csv': Root cube not found for view generation.
-Traceback (most recent call last):
-  File "C:\Users\EBMLB\OneDrive - Bayer\downloads1\utilityUS\excel-to-yaml\utility.py", line 735, in main
-    view_obj = build_view_from_csv_and_cubes(csv_path, cubes, args.view_name, root_cube=args.view_root_cube, view_description=None)
-  File "C:\Users\EBMLB\OneDrive - Bayer\downloads1\utilityUS\excel-to-yaml\utility.py", line 623, in build_view_from_csv_and_cubes
-    raise ValueError("Root cube not found for view generation.")
-ValueError: Root cube not found for view generation.
-
