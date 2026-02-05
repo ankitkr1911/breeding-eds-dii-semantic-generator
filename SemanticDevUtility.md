@@ -1,10 +1,10 @@
-# Semantic Development Utility – Team Guide
+# Semantic Development Utility
 
 ## Overview
 This utility turns one or more Google BigQuery tables into:
-- a consolidated semantic CSV (semantic_all.csv)
 - individual Cube YAML files (one per table) under output/cubes
-- a View YAML (e.g., influx_field_cassette.yml) under output/views, built from the CSV’s join definitions and view metadata
+- a consolidated semantic CSV (semantic_all.csv)
+- a View YAML under output/views, built from the CSV’s join definitions and view metadata
 
 It supports an iterative workflow:
 1. Generate CSV + cube YAMLs from BigQuery (read-only).
@@ -12,9 +12,6 @@ It supports an iterative workflow:
 3. Build the view from the edited CSV and update cubes accordingly.
 
 All runs produce timestamped logs and separate error logs.
-
-## What the utility does not do
-- It never writes to BigQuery or modifies any tables. It only reads table metadata and writes local files.
 
 ## Folder structure
 - input/
@@ -41,13 +38,13 @@ Use this section as-is or adapt paths for your machine.
 
 1) Set credentials (run once per terminal session)
 ```bash
-export GOOGLE_APPLICATION_CREDENTIALS="/Users/ankitkumar/Library/CloudStorage/OneDrive-Bayer/Mac_OneDrive/myproject/breeding-cube-code/BigQuery/credentials.json"
+export GOOGLE_APPLICATION_CREDENTIALS="BigQuery/credentials.json file path on your system"
 ```
 
 2) Change to your project directory (run once per terminal session)
 Replace with your local path to the utility project.
 ```bash
-cd "/Users/ankitkumar/Library/CloudStorage/OneDrive-Bayer/Mac_OneDrive/myproject/utilityUS/Semantic_Development_Utility"
+cd "/utilityUS/Semantic_Development_Utility file path on your system"
 ```
 
 3) Set up Python environment (one-time per machine or when missing packages)
@@ -72,10 +69,6 @@ Step 4) Generate CSV and cube YAMLs from BigQuery tables (repeat this whenever y
 ```bash
 python3 utility.py --bq-tables <project.dataset.table1>,<project.dataset.table2>,<project.dataset.table3> -i ./input --output-dir ./output --verbose
 ```
-- Or multiple flags:
-```bash
-python3 utility.py --bq-table <project.dataset.table1> --bq-table <project.dataset.table2> --bq-table <project.dataset.table3> -i ./input --output-dir ./output --verbose
-```
 
 Outputs after Step 4:
 - CSV: ./input/semantic_all.csv (rows appended/updated per table)
@@ -95,15 +88,6 @@ Open ./input/semantic_all.csv and, for the first row of each cube you want in th
   - visible_in_view
   - view_folder_name
 
-Example first row for a main cube:
-```text
-cube_name,cube_sql_table,cube_description,cube_title,cube_data_source,view_name,view_title,view_description,visible_in_view,view_folder_name,join_primary_table,join_secondary_table,join_sql,join_relationship
-influx_field_cassette_cell,`bcs-breeding-datasets.breeding_operations.influx_field_cassette_cell`,"The Influx Field Cassette Cell cube contains details on what the users have planned for cassette filling. This includes inventories, packets, catlogs, and product catalogs as well as the target quantity to be used when filling. Other details that can be found in this table include cassette id, associated Planting Session, associated plot row id, cell number. Records in this table are created when a planting session is created and are updated when allocation occurs.",Influx Field Cassette Cell,breeding,influx_field_cassette,Influx Field Cassette,"Influx Field Cassette View",TRUE,"Influx Field Cassette","influx_field_cassette_plot_row
-influx_field_cassette_cassette
-influx_field_cassette_as_filled_cell","{CUBE}.plot_row_id = {influx_field_cassette_plot_row.plot_row_id}
-{CUBE.cassette_bid} = {influx_field_cassette_cassette.cassette_bid}
-{CUBE.cassette_bid} = {influx_field_cassette_as_filled_cell.cassette_bid} AND {CUBE}.cell_number = {influx_field_cassette_as_filled_cell.cell_number}","many_to_one"
-```
 Notes:
 - The utility supports multiple values in “join_secondary_table” and “join_sql” as newline-separated or comma-separated lists.
 - “cube_description” and “cube_title” from this first row will appear in the cube YAML.
@@ -113,7 +97,7 @@ Notes:
 Step 6) Build the view and update cubes from the edited CSV (repeat whenever you update the CSV joins or folder organization)
 Run this right after CSV edits:
 ```bash
-python3 utility.py --from-csv ./input/semantic_all.csv --output-dir ./output --view-name influx_field_cassette --view-root-cube influx_field_cassette_cell --verbose
+python3 utility.py --from-csv ./input/semantic_all.csv --output-dir ./output --view-name view_name (eg: influx_field_cassette) --view-root-cube cube_name(eg: influx_field_cassette_cell) --verbose
 ```
 
 Outputs after Step 6:
@@ -173,8 +157,3 @@ python -m pip install pandas google-cloud-bigquery google-cloud-datacatalog
   - Generate CSV + cubes from BigQuery (Step 4) when adding/updating source tables
   - Edit CSV (Step 5) to define joins, metadata, dimension/measures descriptions
   - Build view and update cubes from CSV (Step 6)
-
-## Notes
-- The utility is read-only against BigQuery. It does not insert, update, or delete BigQuery data.
-- Use least-privilege credentials (BigQuery Data Viewer; Data Catalog Viewer optional).
-- Ensure CSV cube_name values match the generated cube YAML filenames (./output/cubes/<cube_name>.yml).
